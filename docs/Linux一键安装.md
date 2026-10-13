@@ -8,12 +8,14 @@
 
 ~~~sh
 curl -fL --proto '=https' --proto-redir '=https' --tlsv1.2 \
-  https://raw.githubusercontent.com/coexacx/YJmonitor/v0.11.5/install.sh \
+  https://raw.githubusercontent.com/coexacx/YJmonitor/main/install.sh \
   -o /root/YJ.sh
 bash /root/YJ.sh
 ~~~
 
-只需填写站点名称。脚本安装运行依赖、验证发行签名、自动创建独立服务账户、0700 私有数据目录、必要权限和随机管理员密码，结束后显示 IP:端口、管理员和初始密码。
+只需填写站点名称。安装脚本从仓库 main 获取；它安装的程序仍固定到签名发行版，并验证发行签名、SHA-256、大小与解压路径。脚本自动创建独立服务账户、0700 私有数据目录、必要权限和随机管理员密码，结束后显示 IP:端口、管理员和初始密码。
+
+如果安装在初始化阶段意外中断，可重新运行同一脚本。只有确认是本脚本留下的未完成状态时才会续装，数据目录会保留；其他已有安装仍会停止并提示检查。
 
 默认端口 19281。需要其他端口可运行 bash /root/YJ.sh --port 29281。运行 --check 仅检查系统与架构，不安装。需要自动化时可用 --site-name '站点名称'。
 

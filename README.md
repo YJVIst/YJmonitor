@@ -18,8 +18,10 @@ Nginx + Rust 单二进制服务器探针。页面、网页安装向导、API 与
 
 ## 一键安装与管理
 
+安装脚本从仓库 main 获取；它安装的主控程序仍固定到签名发行版，并验证签名、SHA-256、大小与解压路径。
+
 ~~~sh
-curl -fL --proto '=https' --proto-redir '=https' --tlsv1.2 https://raw.githubusercontent.com/coexacx/YJmonitor/v0.11.5/install.sh -o /root/YJ.sh
+curl -fL --proto '=https' --proto-redir '=https' --tlsv1.2 https://raw.githubusercontent.com/coexacx/YJmonitor/main/install.sh -o /root/YJ.sh
 bash /root/YJ.sh
 ~~~
 

@@ -49,11 +49,33 @@ if [[ -f /opt/yuji-probe/manage.sh && -f /etc/yuji-probe/instance.json ]]; then
  [[ ! -f /opt/yuji-probe/ops/install-command.py ]] || python3 /opt/yuji-probe/ops/install-command.py --root /opt/yuji-probe
  exec bash /opt/yuji-probe/manage.sh
 fi
-for yuji_path in /var/lib/YJ-update /usr/local/lib/YJ /etc/systemd/system/YJ-update-main.path /etc/systemd/system/YJ-update-main.service /opt/yuji-probe /var/lib/yuji-probe /etc/yuji-probe /etc/systemd/system/yuji-probe.service /opt/YJ /var/lib/YJ /etc/YJ /etc/systemd/system/YJ.service /usr/local/bin/YJ /usr/local/bin/yuji-probe; do
- [[ ! -e "$yuji_path" && ! -L "$yuji_path" ]] || die "已有 $yuji_path，安装已停止。现有站点请按升级文档操作。"
+yuji_resume=0
+yuji_partial_clear=1
+for yuji_path in /var/lib/YJ-update /usr/local/lib/YJ /etc/systemd/system/YJ-update-main.path /etc/systemd/system/YJ-update-main.service /opt/yuji-probe /var/lib/yuji-probe /etc/yuji-probe /etc/systemd/system/yuji-probe.service /usr/local/bin/yuji-probe; do
+ [[ ! -e "$yuji_path" && ! -L "$yuji_path" ]] || yuji_partial_clear=0
 done
-getent passwd YJ >/dev/null && die 'YJ 系统账户已存在，请先核对现有部署。'
-getent group YJ >/dev/null && die 'YJ 系统组已存在，请先核对现有部署。'
+if (( yuji_partial_clear )) && [[ -f /etc/YJ/initial-admin.json && ! -L /etc/YJ/initial-admin.json && ! -s /etc/YJ/initial-admin.json ]]; then
+ # A prior run can stop while writing this file after preparing the service
+ # account and private data directory. Resume only that exact, incomplete state.
+ yuji_passwd=$(getent passwd YJ || true)
+ if [[ -n "$yuji_passwd" && -d /var/lib/YJ && ! -L /var/lib/YJ && -d /var/lib/YJ/control && ! -L /var/lib/YJ/control && -L /opt/YJ/storage && $(readlink -- /opt/YJ/storage) == /var/lib/YJ && -f /opt/YJ/manage.sh && -f /opt/YJ/bin/probe-linux-amd64 && -f /opt/YJ/bin/probe-linux-arm64 && -d /etc/YJ && ! -L /etc/YJ && ! -e /etc/YJ/instance.json && ! -e /etc/systemd/system/YJ.service && ! -e /usr/local/bin/YJ && $(stat -c '%u:%g:%a' /etc/YJ) == 0:0:700 && $(stat -c '%u:%g:%a' /etc/YJ/initial-admin.json) == 0:0:600 ]]; then
+  IFS=: read -r _ _ yuji_uid yuji_gid _ yuji_home yuji_shell <<< "$yuji_passwd"
+  yuji_group=$(getent group YJ || true)
+  IFS=: read -r _ _ yuji_group_gid _ <<< "$yuji_group"
+  if [[ "$yuji_uid" =~ ^[0-9]+$ && "$yuji_uid" != 0 && "$yuji_gid" == "$yuji_group_gid" && "$yuji_home" == /var/lib/YJ && "$yuji_shell" == /usr/sbin/nologin && $(stat -c '%u:%g:%a' /var/lib/YJ) == "$yuji_uid:$yuji_gid:700" && $(stat -c '%u:%g:%a' /var/lib/YJ/control) == "$yuji_uid:$yuji_gid:700" ]]; then
+   yuji_resume=1
+  fi
+ fi
+fi
+if (( yuji_resume )); then
+ printf '\n  检测到未完成的安装，将保留 /var/lib/YJ 中的数据并继续。\n'
+else
+ for yuji_path in /var/lib/YJ-update /usr/local/lib/YJ /etc/systemd/system/YJ-update-main.path /etc/systemd/system/YJ-update-main.service /opt/yuji-probe /var/lib/yuji-probe /etc/yuji-probe /etc/systemd/system/yuji-probe.service /opt/YJ /var/lib/YJ /etc/YJ /etc/systemd/system/YJ.service /usr/local/bin/YJ /usr/local/bin/yuji-probe; do
+  [[ ! -e "$yuji_path" && ! -L "$yuji_path" ]] || die "已有 $yuji_path，安装已停止。现有站点请按升级文档操作。"
+ done
+ getent passwd YJ >/dev/null && die 'YJ 系统账户已存在，请先核对现有部署。'
+ getent group YJ >/dev/null && die 'YJ 系统组已存在，请先核对现有部署。'
+fi
 printf '\n  羽迹探针  /  安装\n  ──────────────────────────────\n  版本  %s    端口  %s\n\n' "$YUJI_VERSION" "$yuji_port"
 if [[ -z "$yuji_name" ]]; then
  exec 3<>/dev/tty || die '需要交互终端，或使用 --site-name。'
@@ -151,23 +173,36 @@ except Exception:
 PYIP
 )
 yuji_origin="http://$yuji_ip:$yuji_port"
-install -d -m 0755 /opt/YJ
-cp -a "$yuji_work/unpacked/yuji-probe-rust-$YUJI_VERSION/." /opt/YJ/
-find /opt/YJ -type d -exec chmod 0755 {} +
-find /opt/YJ -type f -exec chmod 0644 {} +
-chmod 0755 /opt/YJ/bin/probe-linux-* /opt/YJ/manage.sh
-rm -f /opt/YJ/storage/.gitkeep
-rmdir /opt/YJ/storage
+if (( !yuji_resume )); then
+ install -d -m 0755 /opt/YJ
+ cp -a "$yuji_work/unpacked/yuji-probe-rust-$YUJI_VERSION/." /opt/YJ/
+ find /opt/YJ -type d -exec chmod 0755 {} +
+ find /opt/YJ -type f -exec chmod 0644 {} +
+ chmod 0755 /opt/YJ/bin/probe-linux-* /opt/YJ/manage.sh
+ rm -f /opt/YJ/storage/.gitkeep
+ rmdir /opt/YJ/storage
+fi
 python3 /opt/YJ/ops/prepare-service.py --root /opt/YJ --data /var/lib/YJ --user YJ
-ln -s /var/lib/YJ /opt/YJ/storage
+if [[ ! -L /opt/YJ/storage ]]; then ln -s /var/lib/YJ /opt/YJ/storage; fi
 install -d -m 0700 /etc/YJ
 python3 - "$yuji_name" "$yuji_origin" <<'PYINIT'
-import json,pathlib,secrets,sys
-name,origin=sys.argv[1:]
+import json,os,pathlib,secrets,sys,tempfile
+def utf8_text(value):
+    return os.fsencode(value).decode("utf-8", "replace")
+name,origin=(utf8_text(value) for value in sys.argv[1:])
 password=secrets.token_urlsafe(24)
 path=pathlib.Path('/etc/YJ/initial-admin.json')
-path.write_text(json.dumps({'name':name,'username':'admin','password':password,'url':origin},ensure_ascii=False))
-path.chmod(0o600)
+fd,tmp=tempfile.mkstemp(prefix='.initial-admin.',dir=path.parent)
+try:
+    with os.fdopen(fd,'w',encoding='utf-8') as output:
+        output.write(json.dumps({'name':name,'username':'admin','password':password,'url':origin},ensure_ascii=False)+'\n')
+        output.flush()
+        os.fsync(output.fileno())
+    os.chmod(tmp,0o600)
+    os.replace(tmp,path)
+finally:
+    try: os.unlink(tmp)
+    except FileNotFoundError: pass
 PYINIT
 python3 -c 'import json;d=json.load(open("/etc/YJ/initial-admin.json"));d.pop("url");print(json.dumps(d))' | runuser -u YJ -- /opt/YJ/bin/probe-linux-"$yuji_arch" -web -state /var/lib/YJ/control -origin "$yuji_origin" --install
 python3 /opt/YJ/ops/manage.py configure "$yuji_origin" "$yuji_port"
