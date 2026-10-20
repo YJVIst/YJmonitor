@@ -2,7 +2,7 @@
 """Root-owned, fixed-repository signed updater. Browser input cannot select paths or commands."""
 import http.client,socket
 import argparse,base64,fcntl,hashlib,json,os,pathlib,pwd,re,shutil,ssl,stat,subprocess,tempfile,time,urllib.request,urllib.parse,urllib.error,zipfile
-REPOSITORY="coexacx/YJmonitor"
+REPOSITORY="YJVIst/YJmonitor"
 PUBLIC="o8+DdHbo82V7fxJEIiEhe5AK/frR91Fz5vjf/pDAnts="
 BASE=pathlib.Path("/var/lib/yuji-probe-rust-updater")
 LIB=pathlib.Path("/usr/local/lib/yuji-probe-rust-updater")

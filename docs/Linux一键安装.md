@@ -8,7 +8,7 @@
 
 ~~~sh
 curl -fL --proto '=https' --proto-redir '=https' --tlsv1.2 \
-  https://raw.githubusercontent.com/coexacx/YJmonitor/main/install.sh \
+  https://raw.githubusercontent.com/YJVIst/YJmonitor/main/install.sh \
   -o /root/YJ.sh
 bash /root/YJ.sh
 ~~~
@@ -20,6 +20,8 @@ bash /root/YJ.sh
 默认端口 19281。需要其他端口可运行 bash /root/YJ.sh --port 29281。运行 --check 仅检查系统与架构，不安装。需要自动化时可用 --site-name '站点名称'。
 
 已有宝塔或其他站点不影响使用；安装器不占用 80/443，不安装 Nginx，不申请证书。只检查自己的目录、账户、服务名及端口；发现既有数据会停止覆盖。已通过本脚本安装的实例，再次运行脚本会进入管理菜单。
+
+已有主控添加服务器遇到 Agent 下载或签名校验失败时，使用最新脚本运行 `bash /root/YJ.sh --repair-agent-source`。详见 [Agent 发布源修复](Agent发布源修复.md)。
 
 ## 首次访问
 
@@ -76,7 +78,7 @@ sudo YJ
 
 ## 离线发行包
 
-可把同版本的 panel-stable.json 与完整 ZIP 放在 root 所有、不可被其他用户写入的目录，然后运行：
+可把同版本的 panel-stable.json、完整 ZIP、Agent 的 stable.json 及 amd64 / arm64 两份 Agent 程序放在 root 所有、不可被其他用户写入的目录，然后运行：
 
 ~~~sh
 bash install.sh --release-dir /root/yuji-release --site-name '羽迹探针'
@@ -86,4 +88,4 @@ bash install.sh --release-dir /root/yuji-release --site-name '羽迹探针'
 
 ## 旧仓库迁移
 
-仓库已更名为 coexacx/YJmonitor。旧版更新器严格固定原仓库地址，已有安装先按 [仓库更名迁移说明](仓库更名-0.11.2.md) 运行一次迁移脚本。签名公钥、私有状态和节点凭据保持兼容。旧版一键安装实例会同时安装 sudo YJ 入口，旧 yuji-probe 命令作为兼容别名保留。
+仓库已更名为 YJVIst/YJmonitor。旧版更新器严格固定原仓库地址，已有安装先按 [仓库更名迁移说明](仓库更名-0.11.2.md) 运行一次迁移脚本。签名公钥、私有状态和节点凭据保持兼容。旧版一键安装实例会同时安装 sudo YJ 入口，旧 yuji-probe 命令作为兼容别名保留。

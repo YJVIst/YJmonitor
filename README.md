@@ -2,9 +2,9 @@
 
 Nginx + Rust 单二进制服务器探针。页面、网页安装向导、API 与 WSS 均内嵌在主控程序中，运行无需 PHP-FPM、数据库、Node.js 或 Rust 编译环境。
 
-[下载完整安装包](https://github.com/coexacx/YJmonitor/releases/latest) · [一键安装与宝塔部署](docs/Nginx-Rust部署教程.md) · [宝塔 Nginx 配置位置与完整示例](docs/宝塔Nginx配置说明.md) · [从原仓库迁移](docs/仓库迁移-0.10.1.md) · [构建源码](ops/BUILD.md)
+[下载完整安装包](https://github.com/YJVIst/YJmonitor/releases/latest) · [一键安装与宝塔部署](docs/Nginx-Rust部署教程.md) · [宝塔 Nginx 配置位置与完整示例](docs/宝塔Nginx配置说明.md) · [从原仓库迁移](docs/仓库迁移-0.10.1.md) · [构建源码](ops/BUILD.md)
 
-本仓库独立维护 Nginx + Rust 版。原 [Nginx + PHP + Rust 项目](https://github.com/coexacx/yuji-probe) 保留自己的发行与更新通道。本仓库的安装器、主控更新、Agent 下载全部使用 **coexacx/YJmonitor**。
+本仓库独立维护 Nginx + Rust 版。原 [Nginx + PHP + Rust 项目](https://github.com/coexacx/yuji-probe) 保留自己的发行与更新通道。本仓库的安装器、主控更新、Agent 下载全部使用 **YJVIst/YJmonitor**。
 
 ## 功能
 
@@ -21,11 +21,13 @@ Nginx + Rust 单二进制服务器探针。页面、网页安装向导、API 与
 安装脚本从仓库 main 获取；它安装的主控程序仍固定到签名发行版，并验证签名、SHA-256、大小与解压路径。
 
 ~~~sh
-curl -fL --proto '=https' --proto-redir '=https' --tlsv1.2 https://raw.githubusercontent.com/coexacx/YJmonitor/main/install.sh -o /root/YJ.sh
+curl -fL --proto '=https' --proto-redir '=https' --tlsv1.2 https://raw.githubusercontent.com/YJVIst/YJmonitor/main/install.sh -o /root/YJ.sh
 bash /root/YJ.sh
 ~~~
 
 安装脚本自动创建服务用户、私有数据目录并设置权限，无需手动准备。只填写站点名称，安装结束显示 **IP:端口** 与随机生成的管理员密码。运行 sudo YJ 进入管理菜单。服务用户为 YJ，程序 /opt/YJ、数据 /var/lib/YJ、配置 /etc/YJ，开机服务为 YJ.service。
+
+安装时还会从 GitHub 下载 amd64 / arm64 Agent 和原始签名清单，校验后放入主控私有缓存。已有主控遇到“Agent 下载或签名校验失败”时，重新下载上面的安装脚本，运行 `bash /root/YJ.sh --repair-agent-source`。[发布源修复说明](docs/Agent发布源修复.md)。
 
 基础安装保持 IP:端口入口。需要域名访问时，在管理菜单选择 **13 配置 Nginx + HTTPS**，填写已解析域名，自动申请证书、设置反向代理与续期。复用现有 Nginx；未安装时安装签名预编译包。Cloudflare 橙云可保持开启，HTTP 验证受阻时支持受限 API Token 的 DNS 验证。[自动 HTTPS 使用说明](docs/自动HTTPS.md)。
 

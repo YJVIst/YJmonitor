@@ -6,7 +6,7 @@ umask 077
 exec python3 - "$@" <<'PY'
 import argparse,fcntl,importlib.util,json,os,pathlib,re,stat,subprocess,sys,time
 VERSION="0.11.5"
-REPOSITORY="coexacx/YJmonitor"
+REPOSITORY="YJVIst/YJmonitor"
 PUBLIC="o8+DdHbo82V7fxJEIiEhe5AK/frR91Fz5vjf/pDAnts="
 def trusted(path,directory=False):
     path=pathlib.Path(path)

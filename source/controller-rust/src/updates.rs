@@ -36,7 +36,7 @@ impl State {
             "agentRequiresPanelUpdate":backup::newer_release(&self.agent_latest, deploy::AGENT_VERSION),
             "checkedAt":self.checked_at,"attemptedAt":self.attempted_at,"checking":self.checking,
             "error":self.error,"stale":self.checked_at == 0 || now()-self.checked_at > 7200 || !self.error.is_empty(),
-            "url":if self.latest.is_empty(){String::new()}else{format!("https://github.com/coexacx/YJmonitor/releases/tag/v{}",self.latest)}
+            "url":if self.latest.is_empty(){String::new()}else{format!("https://github.com/YJVIst/YJmonitor/releases/tag/v{}",self.latest)}
         })
     }
     pub fn validate_update(&self, version: &str) -> ApiResult<()> {
@@ -71,7 +71,7 @@ async fn fetch(app: &App) -> Result<(String, String), &'static str> {
     let mut response = app
         .0
         .http
-        .get("https://api.github.com/repos/coexacx/YJmonitor/releases/latest")
+        .get("https://api.github.com/repos/YJVIst/YJmonitor/releases/latest")
         .send()
         .await
         .map_err(|_| "GitHub 暂不可用")?;

@@ -36,7 +36,7 @@ while true; do
   7) python3 "$YUJI_OPS" address || true;;
   8) python3 "$YUJI_OPS" backup || true;;
   9) python3 "$YUJI_OPS" reset-mfa || true;;
-  10) printf '\n  https://github.com/coexacx/YJmonitor/blob/main/docs/反向代理.md\n';;
+  10) printf '\n  https://github.com/YJVIst/YJmonitor/blob/main/docs/反向代理.md\n';;
   11) python3 "$YUJI_OPS" rollback || true;;
   12) python3 "$YUJI_OPS" uninstall || true; [[ -f "$YUJI_OPS" ]] || exit 0;;
   13) python3 "$YUJI_OPS" https || true;;

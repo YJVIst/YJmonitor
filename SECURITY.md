@@ -2,7 +2,7 @@
 
 本仓库维护独立 Nginx + Rust 发行版。已知上游 RSA 告警、当前调用路径和限制见 [Rust 安全说明](docs/RUST-SECURITY.md)。本项目不作“没有任何漏洞”的承诺。
 
-如果发现可导致未授权访问、凭据泄露、主控或节点命令执行的问题，请优先通过 [GitHub 私密漏洞报告](https://github.com/coexacx/YJmonitor/security/advisories/new) 联系维护者。不要在公开 Issue 中贴出真实服务器地址、管理员密码、节点 Token、私钥或运行状态文件。
+如果发现可导致未授权访问、凭据泄露、主控或节点命令执行的问题，请优先通过 [GitHub 私密漏洞报告](https://github.com/YJVIst/YJmonitor/security/advisories/new) 联系维护者。不要在公开 Issue 中贴出真实服务器地址、管理员密码、节点 Token、私钥或运行状态文件。
 
 报告请提供受影响版本、复现步骤、预期和实际结果。测试应在自己有权管理的服务器或隔离环境中完成。普通缺陷和部署问题可以提交公开 Issue，并先去除敏感信息。
 

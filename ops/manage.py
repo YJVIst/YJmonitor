@@ -74,7 +74,7 @@ def summary():
 def update(rollback=False):
  m=helper();cfg=trusted((UPDATER_CONF/'main.json'));request={'at':int(time.time()),'action':'rollback' if rollback else 'update'}
  if not rollback:
-  with urllib.request.urlopen(urllib.request.Request('https://api.github.com/repos/coexacx/YJmonitor/releases/latest',headers={'User-Agent':'Yuji-Probe-Manager'}),timeout=15) as r:data=json.loads(r.read(131072))
+  with urllib.request.urlopen(urllib.request.Request('https://api.github.com/repos/YJVIst/YJmonitor/releases/latest',headers={'User-Agent':'Yuji-Probe-Manager'}),timeout=15) as r:data=json.loads(r.read(131072))
   version=data.get('tag_name','').removeprefix('v')
   if not re.fullmatch(r'\d{1,5}\.\d{1,5}\.\d{1,5}',version):raise ValueError('版本信息无效')
   current=subprocess.check_output([str(ROOT/'bin'/('probe-linux-'+ARCH)),'--version'],text=True).split()[1]

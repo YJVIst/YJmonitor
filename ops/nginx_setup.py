@@ -986,7 +986,7 @@ def setup(settings, configure, state):
         print('  公网 HTTPS 检查通过。')
     except (OSError, ValueError, urllib.error.URLError):
         print('  本机 HTTPS 已通过。公网检查未通过，请检查安全组、Cloudflare Full (strict) 与 WAF。')
-    print('  使用说明：https://github.com/coexacx/YJmonitor/blob/main/docs/自动HTTPS.md')
+    print('  使用说明：https://github.com/YJVIst/YJmonitor/blob/main/docs/自动HTTPS.md')
 
 
 def unconfigure():
