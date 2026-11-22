@@ -48,7 +48,13 @@ struct Bundle {
         deserialize_with = "discard_legacy"
     )]
     _legacy_tracks: (),
-    pins: HashMap<String, String>,
+    #[serde(
+        default,
+        rename = "pins",
+        skip_serializing,
+        deserialize_with = "discard_legacy"
+    )]
+    _legacy_pins: (),
 }
 fn discard_legacy<'de, D: serde::Deserializer<'de>>(d: D) -> Result<(), D::Error> {
     serde::de::IgnoredAny::deserialize(d)?;
@@ -156,7 +162,6 @@ fn unpack(value: Value, passphrase: &str) -> ApiResult<Bundle> {
     if b.schema != 1
         || b.data.nodes.len() > MAX_NODES
         || b.data.commands.len() > 50
-        || b.pins.len() > MAX_NODES * 2
         || !valid_text(&b.data.site.name, 60)
         || !username(&b.auth.username)
         || b.auth.hash.len() > 128
@@ -165,7 +170,7 @@ fn unpack(value: Value, passphrase: &str) -> ApiResult<Bundle> {
     }
     if b.data.nodes.iter().any(|n| {
         !operations::valid_id(&n.public.id)
-            || !acceptable_ip(&n.ip)
+            || crate::ssh_address::normalize(&n.ip).is_none()
             || !username(&n.username)
             || !(1..=65535).contains(&n.port)
             || n.public.group.chars().count() > 40
@@ -207,7 +212,7 @@ fn snapshot(app: &App, i: &Inner) -> Bundle {
         telegram: i.telegram.clone(),
         operations,
         _legacy_tracks: (),
-        pins: i.pins.clone(),
+        _legacy_pins: (),
     }
 }
 pub async fn api(app: App, c: Context, body: Vec<u8>) -> ApiResult<ApiReply> {
@@ -432,6 +437,7 @@ fn restore(app: &App, i: &mut Inner, mut b: Bundle) -> ApiResult<bool> {
                         .map_err(|_| ApiError::internal())?,
                     public_key: public,
                     host_key: old.host_key.clone(),
+                    derived_recovery: false,
                     recovery_key: app
                         .seal(&format!("{id}:recovery"), &recovery)
                         .map_err(|_| ApiError::internal())?,
@@ -468,7 +474,6 @@ fn restore(app: &App, i: &mut Inner, mut b: Bundle) -> ApiResult<bool> {
         ("nodes.json", serde_json::to_value(&b.data)),
         ("telegram.json", serde_json::to_value(&b.telegram)),
         ("operations.json", serde_json::to_value(&b.operations)),
-        ("ssh-pins.json", serde_json::to_value(&b.pins)),
     ] {
         files.insert(name.to_string(), value.map_err(|_| ApiError::internal())?);
     }
@@ -485,7 +490,7 @@ fn restore(app: &App, i: &mut Inner, mut b: Bundle) -> ApiResult<bool> {
     }
     i.agents.clear();
     i.tickets.clear();
-    i.trust.clear();
+    i.ssh_dns.clear();
     i.jobs.clear();
     i.cache = None;
     i.theme_cache = None;
@@ -493,7 +498,6 @@ fn restore(app: &App, i: &mut Inner, mut b: Bundle) -> ApiResult<bool> {
     i.data = b.data;
     i.telegram = b.telegram;
     i.ops = b.operations;
-    i.pins = b.pins;
     // Clear old delivery before allowing imported notification credentials.
     if let Some((_, cancel)) = &i.delivery {
         cancel.cancel();
@@ -524,10 +528,10 @@ pub fn complete_restore(dir: &std::path::Path) -> Result<(), &'static str> {
         "nodes.json",
         "telegram.json",
         "operations.json",
-        "ssh-pins.json",
     ];
     // Resume a v0.5.0 restore without reintroducing removed history files.
     files.remove("history");
+    files.remove("ssh-pins.json");
     if files.len() != allowed.len() || !files.keys().all(|v| allowed.contains(&v.as_str())) {
         return Err("restore journal invalid");
     }
@@ -668,7 +672,7 @@ mod tests {
             telegram: TelegramState::default(),
             operations: State::default(),
             _legacy_tracks: (),
-            pins: HashMap::new(),
+            _legacy_pins: (),
         };
         for num in 0..MAX_NODES {
             let id = format!("backup-{num}");

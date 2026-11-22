@@ -398,7 +398,9 @@ fn apply(i: &mut Inner, id: &str, m: Metrics) -> bool {
             n.public.city.clear();
         }
     }
-    n.detected_ip = m.public_ip;
+    if !m.public_ip.is_empty() {
+        n.detected_ip = m.public_ip;
+    }
     true
 }
 
@@ -476,9 +478,9 @@ pub async fn agent_handler(
         .on_failed_upgrade(move |_| {
             failed_app.lock().agent_reserved.remove(&failed_id);
         })
-        .on_upgrade(move |socket| agent_loop(app, id, digest, socket))
+        .on_upgrade(move |socket| agent_loop(app, id, digest, c.ip, socket))
 }
-async fn agent_loop(app: App, id: String, digest: String, ws: WebSocket) {
+async fn agent_loop(app: App, id: String, digest: String, peer_ip: String, ws: WebSocket) {
     let (mut writer, mut reader) = ws.split();
     let (out, mut rx) = vistart_probe_agent::transport_queue::channel::<WS>(
         vistart_probe_agent::wire::MAX_TUNNELS * WINDOW + 16,
@@ -499,6 +501,11 @@ async fn agent_loop(app: App, id: String, digest: String, ws: WebSocket) {
             .is_some_and(|s| constant(&s.token_hash, &digest))
         {
             return;
+        }
+        if acceptable_ip(&peer_ip)
+            && let Some(node) = i.data.nodes.iter_mut().find(|n| n.public.id == id)
+        {
+            node.agent_peer_ip = peer_ip;
         }
         i.agents.insert(id.clone(), link.clone());
         app.record(&mut i, "agent_connected", &id);
@@ -557,7 +564,7 @@ pub fn ticket(app: &App, i: &mut Inner, c: &Context, body: &[u8]) -> ApiResult<A
             .data
             .secrets
             .get(&v.id)
-            .is_some_and(|s| !s.ssh_key.is_empty() && !s.host_key.is_empty())
+            .is_some_and(|s| !s.ssh_key.is_empty())
     {
         return Err(ApiError::new(409, "Agent 尚未就绪，暂时无法连接终端"));
     }

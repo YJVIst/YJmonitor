@@ -84,6 +84,10 @@ pub fn list(i: &Inner) -> Vec<Value> {
         .iter()
         .map(|n| {
             let mut v = nodes::admin_node(n);
+            if n.ip.parse::<std::net::IpAddr>().is_err() {
+                v["resolvedIPs"] =
+                    json!(i.ssh_dns.get(&n.ip).map(Vec::as_slice).unwrap_or_default());
+            }
             let observed = disconnected
                 .get(n.public.id.as_str())
                 .copied()
@@ -485,6 +489,33 @@ mod tests {
         assert_eq!(stored.transfers["node-1"].state, "done");
     }
     #[test]
+    fn disconnected_removal_can_finish_while_its_worker_is_still_running() {
+        let f = Fixture::new();
+        let c = f.context();
+        let mut i = f.app.lock();
+        i.data.nodes[0].public.online = false;
+        i.data.nodes[0].removing = true;
+        i.ops.transfers.insert(
+            "node-0".into(),
+            migration::Transfer {
+                action: "remove".into(),
+                state: "running".into(),
+                ..Default::default()
+            },
+        );
+        for id in ["node-0", "node-1", "node-0"] {
+            assert!(nodes::delete_node(&f.app, &mut i, &c, id, b"").is_ok());
+        }
+        assert!(!i.ops.transfers.contains_key("node-0"));
+        assert_eq!(i.data.nodes.len(), 2);
+        assert!(
+            i.data
+                .nodes
+                .iter()
+                .all(|n| n.public.id != "node-0" && n.public.id != "node-1")
+        );
+    }
+    #[test]
     fn deployment_and_removal_cannot_race_an_executing_upgrade() {
         let f = Fixture::new();
         f.submit(json!(["node-0"])).unwrap();
@@ -497,7 +528,7 @@ mod tests {
         );
         assert_eq!(result.err().unwrap().status, 409);
         f.app.lock().ops.transfers.get_mut("node-0").unwrap().state = "running".into();
-        let result = nodes::delete_node(&f.app, &mut f.app.lock(), &c, "node-0");
+        let result = nodes::delete_node(&f.app, &mut f.app.lock(), &c, "node-0", b"");
         assert_eq!(result.err().unwrap().status, 409);
         assert_eq!(f.app.lock().data.nodes.len(), 4);
     }

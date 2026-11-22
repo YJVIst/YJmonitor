@@ -89,7 +89,6 @@ async fn api(
         if app.0.origin.starts_with("http://")
             && (c.path.starts_with("/api/enroll/")
                 || [
-                    "/api/admin/inspect-ssh",
                     "/api/admin/deploy",
                     "/api/admin/enrollment",
                     "/api/admin/terminal-ticket",
@@ -156,9 +155,6 @@ async fn api(
         }
         if c.path.starts_with("/api/admin/mfa/") {
             return auth::mfa(app.clone(), c, bytes).await;
-        }
-        if c.path == "/api/admin/inspect-ssh" && c.method == "POST" {
-            return deploy::inspect(app.clone(), c, bytes).await;
         }
         if c.path.starts_with("/api/admin/theme") && c.method != "GET" {
             return crate::theme::change(app.clone(), c, bytes).await;
@@ -256,7 +252,6 @@ fn dispatch(app: &App, c: &Context, body: &[u8]) -> ApiResult<ApiReply> {
         ("/api/admin/enrollment", "POST") => crate::enrollment::issue(app, &mut i, c, body),
         ("/api/admin/terminal-ticket", "POST") => realtime::ticket(app, &mut i, c, body),
         ("/api/admin/terminal-close", "POST") => crate::retained::api(app, &mut i, c, body),
-        ("/api/admin/trust-ssh", "POST") => deploy::trust(app, &mut i, c, body),
         ("/api/admin/deploy", "POST") => deploy::begin(app, &mut i, c, body),
         ("/api/admin/go-live", "POST") => {
             app.guard(&mut i, c, true, true)?;
@@ -291,7 +286,7 @@ fn dispatch(app: &App, c: &Context, body: &[u8]) -> ApiResult<ApiReply> {
                     return nodes::save_node(app, &mut i, c, id, body);
                 }
                 if m == "DELETE" {
-                    return nodes::delete_node(app, &mut i, c, id);
+                    return nodes::delete_node(app, &mut i, c, id, body);
                 }
             }
             if let Some(id) = p.strip_prefix("/api/admin/renewals/")
@@ -320,6 +315,7 @@ pub async fn serve(app: App, listen: SocketAddr) -> Result<(), &'static str> {
     let listener = TcpListener::bind(listen)
         .await
         .map_err(|_| "panel port unavailable")?;
+    tokio::spawn(crate::ssh_address::monitor(app.clone()));
     let router = Router::new()
         .route("/api/agent", any(realtime::agent_handler))
         .route("/api/terminal", any(terminal::handler))

@@ -50,7 +50,7 @@ function meter(value,label){if(!finite(value)){const missing=el('div','metric-me
 function sparkline(history,large=false){const w=large?500:112,h=large?100:42,s=svgEl('svg',{viewBox:`0 0 ${w} ${h}`,preserveAspectRatio:'none',class:large?'':'sparkline','aria-hidden':'true'});if(!history.length)return s;if(history.length===1)history=[history[0],history[0]];const coordinates=history.map((v,i)=>[2+i*(w-4)/(history.length-1),h-3-Math.min(100,Math.max(0,v))*(h-6)/100]);const line=coordinates.map(([x,y],i)=>`${i?'L':'M'}${x.toFixed(2)} ${y.toFixed(2)}`).join(' ');s.append(svgEl('path',{d:`${line} L${w-2} ${h} L2 ${h} Z`,class:'spark-fill'}),svgEl('path',{d:line,class:'spark-line'}));if(history.at(-1)>=85&&!large)s.classList.add('warning');return s;}
 function resource(label,kind,values,online=true){const box=el('div','resource-block');const heading=el('span','metric-label');heading.append(icon(kind),document.createTextNode(label));const value=el('div','resource-value');value.append(document.createTextNode(online?display(values?.used):'—'),el('span','resource-total',values?.total>0?'/ '+display(values.total)+' GiB':''));const ratio=online&&values?percent(values.used,values.total):null;box.append(heading,value,meter(ratio,label+'使用率'));const caption=el('div','resource-caption');caption.append(el('span','',finite(ratio)?ratio.toFixed(1)+'%':online?'未启用':'暂无数据'),el('span','','已用 / 总量'));box.append(caption);return box;}
 function openButton(node,cls,text){const b=el('button',cls,text);b.type='button';b.dataset.node=node.id;b.setAttribute('aria-label',`查看 ${node.name} 详情`);b.addEventListener('click',()=>openDetail(node.id));return b;}
-function makeCard(node){const article=el('article','server-card'+(node.online?'':' is-offline'));article.dataset.id=node.id;article.setAttribute('aria-labelledby','title-'+node.id);const heading=el('div','card-heading');const flagWrap=el('span','flag-wrap');flagWrap.append(flag(node.code));const identity=el('div','node-identity');const title=el('h2','node-title');title.id='title-'+node.id;title.append(openButton(node,'',node.name));identity.append(title,el('p','node-location',locationLabel(node)));if(node.group||node.pinned)identity.append(el('p','node-group',(node.pinned?'置顶 · ':'')+(node.group||'未分组')));const badges=el('div','node-badges');badges.append(statusBadge(node),el('span','latency-badge'));heading.append(flagWrap,identity,badges);const hardware=el('div','hardware-row');const model=el('span','cpu-model',node.cpuModel);model.title=node.cpuModel;hardware.append(icon('cpu'),model,el('span','core-count',(node.cores||'—')+' vCPU'));const content=el('div','card-metrics');const footer=el('div','card-footer');const up=el('span','uptime');up.append(icon('clock'),document.createTextNode(node.online?'运行 '+node.uptime:(node.pending?'等待首次上报':'最后上报 '+node.lastSeenMinutes+' 分钟前')));const detail=openButton(node,'detail-link','详情');detail.append(icon('arrow'));footer.append(up,detail);article.append(heading,hardware,content,footer);patchCard(article,node);admin?.decorateCard(article,node);return article;}
+function makeCard(node){const article=el('article','server-card'+(node.online?'':' is-offline'));article.dataset.id=node.id;article.setAttribute('aria-labelledby','title-'+node.id);const heading=el('div','card-heading');const flagWrap=el('span','flag-wrap');flagWrap.append(flag(node.code));const identity=el('div','node-identity');const title=el('h2','node-title');title.id='title-'+node.id;title.append(openButton(node,'',node.name));identity.append(title,el('p','node-location',locationLabel(node)));if(node.group||node.pinned)identity.append(el('p','node-group',(node.pinned?'置顶 · ':'')+(node.group||'未分组')));const badges=el('div','node-badges');badges.append(statusBadge(node),el('span','latency-badge'));heading.append(flagWrap,identity,badges);const hardware=el('div','hardware-row');const model=el('span','cpu-model',node.cpuModel);model.title=node.cpuModel;hardware.append(icon('cpu'),model,el('span','core-count',(node.cores||'—')+' vCPU'));const content=el('div','card-metrics');const footer=el('div','card-footer');const up=el('span','uptime');up.append(icon('clock'),document.createTextNode(node.online?'运行 '+node.uptime:(node.pending?'等待首次上报':'最后上报 '+node.lastSeenMinutes+' 分钟前')));const detail=openButton(node,'detail-link','详情');detail.append(icon('arrow'));footer.append(up,detail);article.append(heading,hardware,content,footer);patchLatencyBadge(article.querySelector('.latency-badge'),node);admin?.decorateCard(article,node);return article;}
 function latencyReading(node){return node?.online&&finite(node.latencyMs)&&node.latencyMs>=0?Math.round(node.latencyMs)+' ms':'—';}
 function patchLatencyBadge(badge,node){
  if(!badge)return;
@@ -60,35 +60,131 @@ function patchLatencyBadge(badge,node){
  badge.setAttribute('aria-label',value==='—'?'与主控的通讯延时暂无数据':'与主控的通讯延时：'+value);
  badge.classList.toggle('is-muted',value==='—');
 }
-function patchCard(card,node){
- patchLatencyBadge(card.querySelector('.latency-badge'),node);
- const content=card.querySelector('.card-metrics');
- const cpu=el('div','cpu-block'),amount=el('div'),number=el('div','cpu-value'+(node.cpu>=85?' warning':''));
- number.append(document.createTextNode(node.online&&finite(node.cpu)?node.cpu.toFixed(1):'—'));
- if(node.online)number.append(el('span','unit','%'));
- amount.append(el('span','metric-label','CPU 使用率'),number);
- cpu.append(amount,node.online?sparkline(node.history):el('span','sparkline-offline','等待重新连接'));
- const resources=el('div','resource-grid');
- const memory=resource('内存','memory',node.memory,node.online);memory.classList.add('memory-resource');
- resources.append(memory,resource('磁盘','disk',diskTotal(node),node.online));
- const sections=[cpu,resources];
- if(hasSwap(node)){
-  const swap=el('div','memory-swap'),label=el('span','swap-label'),message=el('span','swap-usage');
-  label.append(icon('swap'),document.createTextNode('Swap'));
-  if(!node.online){message.textContent='暂无数据';}
-  else{
-   const ratio=percent(node.swap.used,node.swap.total);
-   message.textContent=display(node.swap.used)+' / '+display(node.swap.total)+' GiB';
-   if(ratio!==null&&ratio>=85)message.classList.add('swap-warning');
+const cardViews=new Map();
+const visibleCards=new Set();
+const reducedMotion=matchMedia('(prefers-reduced-motion: reduce)');
+const counters=new Map();
+let counterFrame=0,lastCounterPaint=0;
+function paintCounters(at){
+ counterFrame=0;
+ if(document.hidden||!state.running){counters.clear();return;}
+ if(at-lastCounterPaint>=50){
+  lastCounterPaint=at;
+  for(const [view,run] of counters){
+   if(!visibleCards.has(view)){counters.delete(view);continue;}
+   const t=Math.max(0,Math.min(1,(at-run.start)/run.duration));
+   const cpu=run.from+(run.to-run.from)*t;
+   view.currentCPU=cpu;setText(view.number,cpu.toFixed(1));
+   if(t===1)counters.delete(view);
   }
-  swap.append(label,message);memory.append(swap);
  }
- sections.push(networkUI.card(node));content.replaceChildren(...sections);
+ if(counters.size)counterFrame=requestAnimationFrame(paintCounters);
+}
+function updateCPU(view,cpu,ms){
+ if(!finite(cpu)||!ms||!finite(view.currentCPU)||reducedMotion.matches){
+  counters.delete(view);view.currentCPU=cpu;setText(view.number,finite(cpu)?cpu.toFixed(1):'—');return;
+ }
+ if(view.currentCPU===cpu)return;
+ counters.set(view,{from:view.currentCPU,to:cpu,start:performance.now(),duration:ms});
+ if(!counterFrame)counterFrame=requestAnimationFrame(paintCounters);
+}
+const nearViewport=new IntersectionObserver(entries=>{
+ for(const {target,isIntersecting} of entries){
+  const view=cardViews.get(target.dataset.id);
+  if(view?.card!==target)continue;
+  if(isIntersecting){visibleCards.add(view);updateMetrics(view);}
+  else{visibleCards.delete(view);counters.delete(view);view.motion?.cancel();view.motion=null;}
+ }
+});
+function setText(element,value){if(element.textContent!==value)element.textContent=value;}
+function buildMetrics(view){
+ const {card,node}=view, content=card.querySelector('.card-metrics');
+ const cpu=el('div','cpu-block'),amount=el('div'),value=el('div','cpu-value'),number=el('span');
+ value.append(number);if(node.online)value.append(el('span','unit','%'));
+ amount.append(el('span','metric-label','CPU 使用率'),value);
+ const chart=el('div',node.online?'sparkline live-chart':'sparkline-offline',node.online?'':'等待重新连接');
+ const strip=el('div','chart-strip');if(node.online)chart.append(strip);cpu.append(amount,chart);
+ const grid=el('div','resource-grid'),resources=[];
+ for(const [label,kind] of [['内存','memory'],['磁盘','disk']]){
+  const row=resource(label,kind,{used:0,total:1},node.online);
+  const track=el('div','board-meter'),bar=el('i');track.append(bar);
+  track.setAttribute('role','meter');track.setAttribute('aria-label',label+'使用率');
+  row.querySelector('.metric-meter').replaceWith(track);
+  resources.push({row,bar,track,value:row.querySelector('.resource-value').firstChild,total:row.querySelector('.resource-total'),ratio:row.querySelector('.resource-caption span')});grid.append(row);
+ }
+ let swap;
+ if(hasSwap(node)){const label=el('span','swap-label'),wrap=el('div','memory-swap');swap=el('span','swap-usage');label.append(icon('swap'),document.createTextNode('Swap'));wrap.append(label,swap);resources[0].row.classList.add('memory-resource');resources[0].row.append(wrap);}
+ const net=networkUI.card(node);content.replaceChildren(cpu,grid,net);
+ Object.assign(view,{number,value,strip,chart,resources,swap,net});
+}
+function plotHistory(view,samples,ms){
+ const history=samples.slice(-40),prev=view.history||[];
+ if(history.length===prev.length&&history.every((v,i)=>v===prev[i]))return;
+ view.history=history;view.motion?.cancel();view.motion=null;
+ if(!history.length){view.strip.replaceChildren();return;}
+ let overlap=Math.min(prev.length,history.length);
+ while(overlap&&!prev.slice(-overlap).every((v,i)=>v===history[i]))overlap--;
+ const shift=prev.length===history.length&&ms>0?history.length-overlap:0;
+ const series=shift?[...prev,...history.slice(overlap)]:history;
+ const width=100*(series.length-1)/Math.max(history.length-1,1)||100;
+ view.strip.style.width=width+'%';
+ const svg=sparkline(series);svg.classList.remove('sparkline');view.strip.replaceChildren(svg);
+ const end=(100-width)/width*100;
+ view.strip.style.transform='translateX('+end+'%)';
+ if(shift)view.motion=view.strip.animate([{transform:'translateX(0)'},{transform:'translateX('+end+'%)'}],{duration:ms,easing:'linear'});
+}
+function updateMetrics(view){
+ const n=view.node;
+ if(!view.resources)buildMetrics(view);
+ const ms=view.sampleAt&&n.online&&state.running&&!reducedMotion.matches?Math.min(state.refreshSeconds*1000,Math.max(200,performance.now()-view.sampleAt)):0;
+ view.sampleAt=performance.now();
+ updateCPU(view,n.online?n.cpu:null,ms);
+ view.value.classList.toggle('warning',n.cpu>=85);
+ if(n.online)plotHistory(view,n.history,ms);
+ const disk=diskTotal(n);
+ for(const [j,values] of [n.memory,disk].entries()){
+  const r=view.resources[j],used=n.online?values?.used:null,total=values?.total,ratio=percent(used,total),value=display(used);
+  if(r.value.data!==value)r.value.data=value;
+  setText(r.total,total>0?'/ '+display(total)+' GiB':'');
+  setText(r.ratio,ratio!==null?ratio.toFixed(1)+'%':n.online?'未启用':'暂无数据');
+  r.bar.style.transitionDuration=ms+'ms';r.bar.style.transform='scaleX('+((ratio||0)/100)+')';
+  r.track.classList.toggle('warning',ratio>=85);
+  if(ratio===null)r.track.removeAttribute('aria-valuenow');else r.track.setAttribute('aria-valuenow',ratio.toFixed(1));
+ }
+ if(view.swap){setText(view.swap,n.online?display(n.swap.used)+' / '+display(n.swap.total)+' GiB':'暂无数据');view.swap.classList.toggle('swap-warning',n.online&&percent(n.swap.used,n.swap.total)>=85);}
+ networkUI.updateCard(view.net,n);
+}
+function syncCards(list){
+ const grid=$('#server-grid'),wanted=new Set(list.map(n=>n.id));
+ for(const [id,v] of cardViews)if(!wanted.has(id)){nearViewport.unobserve(v.card);visibleCards.delete(v);counters.delete(v);v.motion?.cancel();v.card.remove();cardViews.delete(id);}
+ grid.classList.toggle('many-nodes',list.length>8);
+ const isAdmin=admin?.isAdmin();
+ const records=isAdmin?new Map(admin.getRecords().map(r=>[r.public.id,r])):null;
+ let cursor=grid.firstElementChild;
+ for(const n of list){
+  const record=records?.get(n.id);
+  const signature=JSON.stringify([n.name,n.country,n.city,n.code,n.group,n.pinned,n.online,n.pending,n.cpuModel,n.cores,hasSwap(n),isAdmin]);
+  let v=cardViews.get(n.id);
+  if(!v||v.signature!==signature){
+   const card=makeCard(n);
+   if(v){if(cursor===v.card)cursor=card;nearViewport.unobserve(v.card);visibleCards.delete(v);counters.delete(v);v.motion?.cancel();v.card.replaceWith(card);}
+   v={node:n,card,signature};cardViews.set(n.id,v);nearViewport.observe(card);
+  }
+  if(v.card!==cursor)grid.insertBefore(v.card,cursor);
+  cursor=v.card.nextElementSibling;
+  if(record){const ip=v.card.querySelector('.admin-ip-row code');if(ip)setText(ip,record.currentIP);}
+  if(v.node!==n){
+   v.node=n;patchLatencyBadge(v.card.querySelector('.latency-badge'),n);
+   const uptime=v.card.querySelector('.uptime').lastChild,txt=n.online?'运行 '+n.uptime:(n.pending?'等待首次上报':'最后上报 '+n.lastSeenMinutes+' 分钟前');
+   if(uptime.data!==txt)uptime.data=txt;
+   if(visibleCards.has(v))updateMetrics(v);
+  }
+ }
 }
 function filtered(){const q=state.query.normalize('NFKC').toLocaleLowerCase();const list=nodes.filter(n=>(state.status==='all'||(state.status==='online')===n.online)&&(state.country==='all'||n.country===state.country)&&(state.group==='all'||'g:'+n.group===state.group)&&(!q||[n.name,n.group,n.country,n.city,n.cpuModel,n.arch].join(' ').normalize('NFKC').toLocaleLowerCase().includes(q)));if(state.sort==='cpu')list.sort((a,b)=>(b.online?b.cpu:-1)-(a.online?a.cpu:-1));if(state.sort==='memory')list.sort((a,b)=>(b.online?percent(b.memory.used,b.memory.total):-1)-(a.online?percent(a.memory.used,a.memory.total):-1));if(state.sort==='name')list.sort((a,b)=>a.name.localeCompare(b.name));if(state.sort==='default')list.sort((a,b)=>Number(!!b.pinned)-Number(!!a.pinned)||(a.order||0)-(b.order||0));return list;}
 const boardPager=createPager(el,()=>{render();$('#server-grid').scrollIntoView({block:'start'});},60,'服务器看板');
 $('#server-grid').after(boardPager.root);
-function render(){const focused=document.activeElement;const focusedId=focused?.dataset?.node;const focusedClass=focused?.className;const list=filtered(),range=boardPager.range(list.length);$('#server-grid').replaceChildren(...list.slice(range.start,range.end).map(makeCard));$('#empty-state').hidden=list.length!==0;$('#server-grid').hidden=list.length===0;$('#result-count').textContent=list.length===nodes.length?'全部 '+list.length+' 台服务器':'显示 '+list.length+' / '+nodes.length+' 台服务器';$('#empty-description').textContent=state.query?'未找到与“'+state.query+'”匹配的节点。':'这个地区暂时没有符合条件的服务器。';for(const b of document.querySelectorAll('[data-status]')){const active=b.dataset.status===state.status;b.classList.toggle('active',active);b.setAttribute('aria-pressed',String(active));}if(focusedId){const restore=Array.from(document.querySelectorAll('[data-node]')).find(b=>b.dataset.node===focusedId&&b.className===focusedClass);restore?.focus({preventScroll:true});}}
+function render(){const focused=document.activeElement;const focusedId=focused?.dataset?.node;const focusedClass=focused?.className;const list=filtered(),range=boardPager.range(list.length);syncCards(list.slice(range.start,range.end));$('#empty-state').hidden=list.length!==0;$('#server-grid').hidden=list.length===0;$('#result-count').textContent=list.length===nodes.length?'全部 '+list.length+' 台服务器':'显示 '+list.length+' / '+nodes.length+' 台服务器';$('#empty-description').textContent=state.query?'未找到与“'+state.query+'”匹配的节点。':'这个地区暂时没有符合条件的服务器。';for(const b of document.querySelectorAll('[data-status]')){const active=b.dataset.status===state.status;b.classList.toggle('active',active);b.setAttribute('aria-pressed',String(active));}if(focusedId){const restore=Array.from(document.querySelectorAll('[data-node]')).find(b=>b.dataset.node===focusedId&&b.className===focusedClass);restore?.focus({preventScroll:true});}}
 function applyTheme(theme){document.documentElement.dataset.theme=theme;$('#theme-toggle').setAttribute('aria-label',theme==='dark'?'切换到浅色主题':'切换到深色主题');$('#theme-toggle').replaceChildren(icon(theme==='dark'?'sun':'moon'));try{localStorage.setItem('vistart-probe-theme',theme);}catch{}}
 let storedTheme;try{storedTheme=localStorage.getItem('vistart-probe-theme');}catch{}
 applyTheme(['light','dark'].includes(storedTheme)?storedTheme:matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
@@ -103,7 +199,7 @@ $('#group-filter').addEventListener('change',event=>{state.group=event.target.va
 $('#sort').addEventListener('change',event=>{state.sort=event.target.value;boardPager.reset();render();});
 $('#clear-filters').addEventListener('click',()=>{state.query='';state.status='all';state.country='all';state.group='all';$('#group-filter').value='all';state.sort='default';$('#search').value='';$('#country-filter').value='all';$('#sort').value='default';boardPager.reset();render();$('#search').focus();});
 function updateRefresh(){const active=state.running;$('#refresh-toggle').setAttribute('aria-pressed',String(active));$('#refresh-toggle').setAttribute('aria-label',active?(demoMode?'暂停演示自动刷新':'暂停实时刷新'):(demoMode?'继续演示自动刷新':'继续实时刷新'));$('#refresh-label').textContent=active?(demoMode?'演示自动刷新':'实时刷新'):(demoMode?'演示已暂停':'已暂停刷新');$('.refresh-icon').replaceChildren(icon(active?'pause':'play'));$('#refresh-time').textContent=clock.format(state.updated);}
-$('#refresh-toggle').addEventListener('click',()=>{state.running=!state.running;updateRefresh();});
+$('#refresh-toggle').addEventListener('click',()=>{state.running=!state.running;for(const v of visibleCards){if(v.motion){if(state.running)v.motion.play();else v.motion.pause();} }updateRefresh();});
 function showDetail(node){const root=$('#dialog-content');const heading=el('div','dialog-header');const flagWrap=el('span','flag-wrap');flagWrap.append(flag(node.code));const titles=el('div');const title=el('h2','',node.name);title.id='dialog-title';titles.append(title,el('p','node-location',locationLabel(node)));heading.append(flagWrap,titles,statusBadge(node));const hardware=el('div','detail-hardware');for(const [label,value]of [['CPU 型号',node.cpuModel],['核心 / 架构',node.cores+' vCPU · '+node.arch],['操作系统',node.system],['主控通讯延时',latencyReading(node)],['运行时间',node.online?node.uptime:'离线 · 等待上报']]){const block=el('dl');block.append(el('dt','',label),el('dd','',value));if(label==='主控通讯延时')block.dataset.metric='latency';hardware.append(block);}const sections=[heading,hardware];if(node.online){const chart=el('section','detail-chart');const chartHeader=el('div','section-heading');chartHeader.append(el('h3','','CPU 使用率'),el('span','',node.cpu.toFixed(1)+(demoMode?'% · 演示趋势':'% · 实时采样')));const chartSvg=sparkline(node.history,true);chartSvg.removeAttribute('aria-hidden');chartSvg.setAttribute('role','img');chartSvg.setAttribute('aria-label',(demoMode?'CPU 使用率演示曲线，当前 ':'CPU 使用率曲线，当前 ')+node.cpu.toFixed(1)+'%');const axis=el('div','chart-axis');axis.append(el('span','','最近 2 分钟'),el('span','','现在'));chart.append(chartHeader,chartSvg,axis);sections.push(chart);}else{sections.push(el('p','dialog-notice','最后一次上报于 '+node.lastSeenMinutes+' 分钟前。节点离线后暂停显示使用率，避免将过期数据作为当前状态。'));}const resources=el('div','detail-resource-row');resources.append(resource('内存','memory',node.memory,node.online));if(hasSwap(node))resources.append(resource('Swap','swap',node.swap,node.online));sections.push(resources);const disks=el('section');const label=el('div','section-heading');label.append(el('h3','','磁盘'),el('span','',node.disks.length+' 个卷 · 容量单位 GiB'));const list=el('ul','disk-list');for(const disk of node.disks){const item=el('li','disk-item');const row=el('div','disk-row');row.append(el('strong','',disk.name),el('span','',(node.online?display(disk.used):'—')+' / '+display(disk.total)+' GiB'));item.append(row,meter(node.online?percent(disk.used,disk.total):null,disk.name+'使用率'));list.append(item);}disks.append(label,list);sections.push(disks);sections.push(networkUI.detail(node));root.replaceChildren(...sections);admin?.decorateDetail(root,node);}
 let dialogTrigger=null;
 function openDetail(id){const node=nodes.find(n=>n.id===id);if(!node)return;dialogTrigger={id,detail:document.activeElement?.classList.contains('detail-link')};state.dialogId=id;showDetail(node);$('#node-dialog').showModal();$('#dialog-close').focus();}
@@ -112,13 +208,14 @@ $('#node-dialog').addEventListener('close',()=>{state.dialogId=null;if(dialogTri
 $('#node-dialog').addEventListener('keydown',event=>{if(event.key!=='Tab')return;const controls=Array.from(event.currentTarget.querySelectorAll('button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')).filter(e=>e.getClientRects().length>0);const first=controls[0],last=controls.at(-1);if(!first){event.preventDefault();event.currentTarget.focus();return;}if(controls.length===1||(event.shiftKey&&document.activeElement===first)||(!event.shiftKey&&document.activeElement===last)){event.preventDefault();(event.shiftKey?last:first).focus();}});
 $('#node-dialog').addEventListener('click',event=>{if(event.target!==$('#node-dialog'))return;const rect=event.target.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)event.target.close();});
 document.addEventListener('keydown',event=>{if(event.key==='/'&&!event.ctrlKey&&!event.metaKey&&!event.altKey&&!$('#node-dialog').open&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)){event.preventDefault();$('#search').focus();}});
+let appliedSiteName='';
 function applySite(site){
  const name=typeof site?.name==='string'&&site.name.trim()?site.name:'服务器监控';
+ state.refreshSeconds=site.refreshSeconds||5;if(name===appliedSiteName)return;appliedSiteName=name;
  for(const element of document.querySelectorAll('[data-site-name]'))element.textContent=name;
  const brand=$('.brand');brand.setAttribute('aria-label',name+' 首页');brand.title=name;
  document.title='服务器状态 · '+name;
  document.querySelector('meta[name="description"]').content=name+' 服务器状态看板。查看节点所在地区、CPU、内存、Swap、磁盘与网络流量。';
- state.refreshSeconds=site.refreshSeconds||5;
 }
 function applyData(list,site,preview,themeRevision){
  refreshAppearance(themeRevision);
@@ -138,6 +235,6 @@ function applyData(list,site,preview,themeRevision){
   if(current)showDetail(current);else $('#node-dialog').close();
  }
 }
-admin=initAdmin({el,icon,flag,setData:applyData,setSite:applySite,onBoardOpen:render,onLogout:()=>{$('#node-dialog').close();$('#dialog-content').replaceChildren();nodes.splice(0);render();},onLoadError:message=>{$('#node-dialog').close();$('#dialog-content').replaceChildren();nodes.splice(0);$('#server-grid').replaceChildren();$('#server-grid').hidden=true;$('#empty-state').hidden=false;$('#empty-description').textContent=message;$('.demo-label').textContent='连接中断';}});
+admin=initAdmin({el,icon,flag,setData:applyData,setSite:applySite,onBoardOpen:render,onLogout:()=>{$('#node-dialog').close();$('#dialog-content').replaceChildren();nodes.splice(0);render();},onLoadError:message=>{$('#node-dialog').close();$('#dialog-content').replaceChildren();nodes.splice(0);syncCards([]);$('#server-grid').hidden=true;$('#empty-state').hidden=false;$('#empty-description').textContent=message;$('.demo-label').textContent='连接中断';}});
 render();updateRefresh();
-setInterval(()=>{if(!state.running||document.hidden||Date.now()-state.updated.getTime()<state.refreshSeconds*1000)return;state.step++;if(demoMode)nodes.forEach((node,i)=>{if(!node.online||!node.demo)return;const base=baseCPU.get(node.id)??node.cpu;node.cpu=Math.round(Math.max(0,Math.min(100,base+Math.sin(state.step*.7+i)*2.1))*10)/10;node.history=[...node.history.slice(1),node.cpu];});state.updated=new Date();if(!$('#main-content').hidden){if(state.sort==='cpu')render();else{const byId=new Map(nodes.map(n=>[n.id,n]));for(const card of document.querySelectorAll('.server-card'))patchCard(card,byId.get(card.dataset.id));}}if(state.dialogId&&nodes.some(n=>n.id===state.dialogId))showDetail(nodes.find(n=>n.id===state.dialogId));updateRefresh();admin.refresh(true);},1000);
+setInterval(()=>{if(!state.running||document.hidden||Date.now()-state.updated.getTime()<state.refreshSeconds*1000)return;state.step++;if(demoMode)nodes.forEach((node,i)=>{if(!node.online||!node.demo)return;const base=baseCPU.get(node.id)??node.cpu;node.cpu=Math.round(Math.max(0,Math.min(100,base+Math.sin(state.step*.7+i)*2.1))*10)/10;node.history=[...node.history.slice(1),node.cpu];});state.updated=new Date();updateRefresh();admin.refresh(true);},1000);

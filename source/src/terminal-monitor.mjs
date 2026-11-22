@@ -164,7 +164,7 @@ export function createTerminalMonitor({root, getRecord, connected, request, onVo
   async function update(sample = true) {
     if (!started || !root.isConnected || document.hidden) return;
     const record = getRecord(); if (!record) return; const n = record.public, ready = connected() && n.online;
-    ip.textContent = record.ip; ip.title = record.username + '@' + record.ip + ':' + record.port;
+    ip.textContent = record.currentIP || record.ip; ip.title = record.username + '@' + record.ip + ':' + record.port;
     uptime.textContent = '运行 ' + (n.uptime || '—');
     bar('cpu', n.cpu, 100, Number.isFinite(n.cpu) ? n.cpu.toFixed(1) + '%' : '—');
     bar('memory', Number.isFinite(n.memory?.used) ? n.memory.used * 1073741824 : null, n.memory?.total * 1073741824);

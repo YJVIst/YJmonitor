@@ -149,7 +149,8 @@ pub async fn claim(app: App, c: Context, body: Vec<u8>) -> ApiResult<ApiReply> {
     secret.token = app
         .seal(&format!("{}:token", node.public.id), plain.as_bytes())
         .map_err(|_| ApiError::internal())?;
-    secret.host_key = STANDARD.encode(raw);
+    ssh::bind_recovery(&app, &node.public.id, &mut secret, &raw)
+        .map_err(|_| ApiError::internal())?;
     let config=Zeroizing::new(serde_json::to_vec(&json!({"node_id":node.public.id,"token":plain.as_str(),"controller_url":app.0.origin.replacen("https://","wss://",1)+"/api/agent","ssh_port":node.port})).map_err(|_|ApiError::internal())?);
     let archive = Zeroizing::new(
         deploy::installation(

@@ -20,6 +20,7 @@ mod retained;
 mod server_management;
 mod setup;
 mod ssh;
+mod ssh_address;
 mod telegram;
 mod terminal;
 mod theme;

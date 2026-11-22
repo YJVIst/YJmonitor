@@ -1,174 +1,20 @@
 use crate::{core::*, model::*, ssh};
-use base64::{
-    Engine,
-    engine::general_purpose::{STANDARD, STANDARD_NO_PAD},
-};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use ed25519_dalek::{Signature, VerifyingKey};
 use flate2::{Compression, write::GzEncoder};
 use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use std::{net::SocketAddr, time::Duration};
+use std::time::Duration;
 use tokio::time::timeout;
 use zeroize::Zeroizing;
 const RELEASE_VERSION: &str = "0.11.3";
 pub const AGENT_VERSION: &str = "0.2.3";
 #[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-struct Inspect {
-    ip: String,
-    port: u16,
-}
-#[derive(Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct TrustInput {
-    inspection: String,
-    replace: bool,
-}
-#[derive(Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
 struct Input {
     id: String,
     password: String,
-}
-fn address(n: &Node) -> ApiResult<SocketAddr> {
-    Ok(SocketAddr::new(
-        n.ip.parse()
-            .map_err(|_| ApiError::new(400, "SSH IP 不正确"))?,
-        u16::try_from(n.port)
-            .ok()
-            .filter(|v| *v > 0)
-            .ok_or_else(|| ApiError::new(400, "SSH 端口不正确"))?,
-    ))
-}
-pub async fn inspect(app: App, c: Context, body: Vec<u8>) -> ApiResult<ApiReply> {
-    let v: Inspect = decode(&body)?;
-    if !acceptable_ip(&v.ip) || v.port == 0 {
-        return Err(ApiError::new(400, "请填写有效的服务器 IP 与端口"));
-    }
-    let sid = {
-        let mut i = app.lock();
-        let x = app.guard(&mut i, &c, true, true)?;
-        i.request(&format!("inspect:{}", c.ip), 12)?;
-        x.id
-    };
-    let _slot = app
-        .0
-        .deploy_slots
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| ApiError::rate("正在检查其他服务器，请稍后重试", 5))?;
-    let address = SocketAddr::new(v.ip.parse().unwrap(), v.port);
-    let key = ssh::inspect(address)
-        .await
-        .map_err(|_| ApiError::new(502, "无法获取 SSH 主机密钥，请检查 IP、端口和防火墙"))?;
-    let raw = key.to_bytes().map_err(|_| ApiError::internal())?;
-    let encoded = STANDARD.encode(&raw);
-    let fingerprint = host_fingerprint(&raw);
-    let mut i = app.lock();
-    let current = app.guard(&mut i, &c, true, true)?;
-    if sid != current.id {
-        return Err(ApiError::new(401, "登录已过期"));
-    }
-    let pinned = i.pins.get(&address.to_string()).cloned();
-    let changed = pinned.as_ref().is_some_and(|old| old != &encoded);
-    let previous_fingerprint = pinned
-        .as_ref()
-        .map(|old| STANDARD.decode(old).map(|raw| host_fingerprint(&raw)))
-        .transpose()
-        .map_err(|_| ApiError::new(409, "保存的 SSH 指纹无效，请检查信任记录"))?;
-    i.trust.retain(|_, v| v.expires >= now());
-    if i.trust.len() >= 128 {
-        return Err(ApiError::rate("请稍后重试", 60));
-    }
-    let id = token();
-    i.trust.insert(
-        id.clone(),
-        Trust {
-            session_id: sid,
-            address: address.to_string(),
-            key: encoded.clone(),
-            previous_key: pinned.clone(),
-            expires: now() + 300,
-        },
-    );
-    Ok(ApiReply::ok(
-        json!({"trusted":pinned.as_ref()==Some(&encoded),"changed":changed,"address":address.to_string(),"fingerprint":fingerprint,"previousFingerprint":previous_fingerprint,"inspection":id}),
-    ))
-}
-fn host_fingerprint(raw: &[u8]) -> String {
-    format!("SHA256:{}", STANDARD_NO_PAD.encode(Sha256::digest(raw)))
-}
-pub fn trust(app: &App, i: &mut Inner, c: &Context, body: &[u8]) -> ApiResult<ApiReply> {
-    let x = app.guard(i, c, true, true)?;
-    let v: TrustInput = decode(body)?;
-    let found = i
-        .trust
-        .get(&v.inspection)
-        .filter(|v| v.session_id == x.id && v.expires >= now())
-        .cloned()
-        .ok_or_else(|| ApiError::new(400, "主机检查已过期，请重新检查"))?;
-    // The administrator confirms exactly the old/new pair from this session.
-    // A concurrent trust change invalidates the inspection, even if the new key matches.
-    if i.pins.get(&found.address) != found.previous_key.as_ref() {
-        i.trust.remove(&v.inspection);
-        return Err(ApiError::new(
-            409,
-            "SSH 信任记录已更新，请重新检查并核对指纹",
-        ));
-    }
-    let changed = found
-        .previous_key
-        .as_ref()
-        .is_some_and(|old| old != &found.key);
-    if changed && !v.replace {
-        return Err(ApiError::new(
-            409,
-            "服务器 SSH 指纹已变更，请核对新旧指纹并明确确认更新",
-        ));
-    }
-    if changed
-        && i.jobs.values().any(|job| {
-            job.state == "running"
-                && i.data.nodes.iter().any(|node| {
-                    node.public.id == job.node_id
-                        && address(node).is_ok_and(|value| value.to_string() == found.address)
-                })
-        })
-    {
-        return Err(ApiError::new(409, "此服务器正在部署，请等待完成后重新检查"));
-    }
-    let subject = if changed {
-        let old = STANDARD
-            .decode(found.previous_key.as_deref().unwrap_or_default())
-            .map_err(|_| ApiError::internal())?;
-        let new = STANDARD
-            .decode(&found.key)
-            .map_err(|_| ApiError::internal())?;
-        format!(
-            "{} · {} → {}",
-            found.address,
-            host_fingerprint(&old),
-            host_fingerprint(&new)
-        )
-    } else {
-        found.address.clone()
-    };
-    let mut pins = i.pins.clone();
-    pins.insert(found.address.clone(), found.key.clone());
-    atomic_json(&app.0.dir.join("ssh-pins.json"), &pins).map_err(|_| ApiError::internal())?;
-    i.pins = pins;
-    i.trust.remove(&v.inspection);
-    app.record(
-        i,
-        if changed {
-            "ssh_host_replaced"
-        } else {
-            "ssh_host_trusted"
-        },
-        &subject,
-    );
-    Ok(ApiReply::ok(json!({"ok":true})))
 }
 pub fn ensure_secret(app: &App, i: &mut Inner, id: &str) -> ApiResult<NodeSecret> {
     if let Some(s) = i.data.secrets.get(id)
@@ -204,7 +50,7 @@ pub fn ensure_secret(app: &App, i: &mut Inner, id: &str) -> ApiResult<NodeSecret
             .seal(&format!("{id}:ssh"), &key)
             .map_err(|_| ApiError::internal())?,
         public_key: public,
-        host_key: String::new(),
+        ..Default::default()
     };
     Ok(secret)
 }
@@ -226,7 +72,7 @@ pub fn begin(app: &App, i: &mut Inner, c: &Context, body: &[u8]) -> ApiResult<Ap
     {
         return Err(ApiError::new(409, "该服务器已有管理任务，请等待完成"));
     }
-    if !acceptable_ip(&node.ip)
+    if crate::ssh_address::normalize(&node.ip).is_none()
         || !username(&node.username)
         || v.password.is_empty()
         || v.password.len() > 256
@@ -234,11 +80,6 @@ pub fn begin(app: &App, i: &mut Inner, c: &Context, body: &[u8]) -> ApiResult<Ap
     {
         return Err(ApiError::new(400, "请填写有效的 SSH 用户名与密码"));
     }
-    let pin = i
-        .pins
-        .get(&address(&node)?.to_string())
-        .cloned()
-        .ok_or_else(|| ApiError::new(409, "请先核实 SSH 主机指纹"))?;
     if i.jobs
         .values()
         .any(|j| j.node_id == v.id && j.state == "running")
@@ -257,11 +98,10 @@ pub fn begin(app: &App, i: &mut Inner, c: &Context, body: &[u8]) -> ApiResult<Ap
     {
         return Err(ApiError::new(409, "一次性接入正在处理，请稍后重试"));
     }
-    let mut secret = ensure_secret(app, i, &v.id)?;
+    let secret = ensure_secret(app, i, &v.id)?;
     let agent_token = app
         .unseal(&format!("{}:token", v.id), &secret.token)
         .map_err(|_| ApiError::internal())?;
-    secret.host_key = pin;
     let mut data = i.data.clone();
     data.secrets.insert(v.id.clone(), secret.clone());
     let job = DeployJob {
@@ -567,10 +407,12 @@ async fn run(
     agent_token: &[u8],
     password: &str,
 ) -> Result<(), &'static str> {
-    let address = address(node).map_err(|_| "SSH 地址不正确")?;
-    let client = ssh::password_client(address, &node.username, password, &secret.host_key)
+    let port = u16::try_from(node.port).map_err(|_| "SSH 端口不正确")?;
+    let (client, server_key) = ssh::password_client(&node.ip, port, &node.username, password)
         .await
-        .map_err(|_| "SSH 验证失败，请核实用户名、密码与服务器指纹")?;
+        .map_err(|_| "SSH 登录失败，请检查地址、端口、用户名和密码")?;
+    let mut secret = secret.clone();
+    ssh::bind_recovery(app, &node.public.id, &mut secret, &server_key)?;
     progress(app, job, "running", "正在检查系统与架构");
     let check = ssh::remote(
         &client,
@@ -634,6 +476,14 @@ async fn run(
     .await
     .map_err(|_| "Agent 上传失败")?;
     progress(app, job, "running", "正在安装独立探针服务");
+    {
+        let mut i = app.lock();
+        let mut data = i.data.clone();
+        let entry = data.secrets.get_mut(&node.public.id).ok_or("节点已移除")?;
+        *entry = secret.clone();
+        app.save_data(&mut i, data)
+            .map_err(|_| "保存恢复凭据失败")?;
+    }
     let installed_at = now();
     ssh::remote(
         &client,
@@ -662,243 +512,6 @@ async fn run(
 mod tests {
     use super::*;
 
-    struct Fixture {
-        app: App,
-        context: Context,
-        inspection: String,
-        old: String,
-        new: String,
-    }
-    impl Fixture {
-        fn new() -> Self {
-            let dir = std::env::temp_dir().join(format!("probe-host-trust-{}", token()));
-            std::fs::create_dir(&dir).unwrap();
-            atomic_json(
-                &dir.join("auth.json"),
-                &Auth {
-                    version: token(),
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-            atomic_json(
-                &dir.join("nodes.json"),
-                &Data {
-                    schema: 2,
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-            let app = App::new(dir, "https://trust.test".into(), false).unwrap();
-            let session = app.lock().new_session("", true).unwrap();
-            let mut headers = axum::http::HeaderMap::new();
-            headers.insert(
-                "Cookie",
-                format!("{COOKIE}={}", session.id).parse().unwrap(),
-            );
-            headers.insert("Origin", "https://trust.test".parse().unwrap());
-            headers.insert("X-CSRF-Token", session.csrf.parse().unwrap());
-            let context = Context::new(
-                "POST",
-                "/api/admin/trust-ssh",
-                headers,
-                "127.0.0.1:9999".parse().unwrap(),
-                &app.0.origin,
-            );
-            let inspection = token();
-            let old = STANDARD.encode(b"old observed host key");
-            let new = STANDARD.encode(b"new observed host key");
-            {
-                let mut i = app.lock();
-                i.pins.insert("192.0.2.1:22".into(), old.clone());
-                i.pins.insert("192.0.2.1:2222".into(), old.clone());
-                i.trust.insert(
-                    inspection.clone(),
-                    Trust {
-                        session_id: session.id,
-                        address: "192.0.2.1:22".into(),
-                        key: new.clone(),
-                        previous_key: Some(old.clone()),
-                        expires: now() + 300,
-                    },
-                );
-                atomic_json(&app.0.dir.join("ssh-pins.json"), &i.pins).unwrap();
-            }
-            Self {
-                app,
-                context,
-                inspection,
-                old,
-                new,
-            }
-        }
-        fn confirm(&self, replace: bool) -> ApiResult<ApiReply> {
-            trust(
-                &self.app,
-                &mut self.app.lock(),
-                &self.context,
-                &serde_json::to_vec(&json!({"inspection":self.inspection,"replace":replace}))
-                    .unwrap(),
-            )
-        }
-        fn stored(&self) -> std::collections::HashMap<String, String> {
-            read_json(&self.app.0.dir.join("ssh-pins.json")).unwrap()
-        }
-    }
-    impl Drop for Fixture {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.app.0.dir);
-        }
-    }
-    #[test]
-    fn changed_key_requires_explicit_confirmation_and_is_one_use() {
-        let f = Fixture::new();
-        assert_eq!(f.confirm(false).err().unwrap().status, 409);
-        assert_eq!(f.stored()["192.0.2.1:22"], f.old);
-        assert!(f.confirm(true).is_ok());
-        assert_eq!(f.stored()["192.0.2.1:22"], f.new);
-        assert_eq!(f.stored()["192.0.2.1:2222"], f.old);
-        assert_eq!(f.confirm(true).err().unwrap().status, 400);
-        let i = f.app.lock();
-        assert_eq!(i.audit.last().unwrap().action, "ssh_host_replaced");
-        assert!(
-            i.audit
-                .last()
-                .unwrap()
-                .subject
-                .contains(&host_fingerprint(b"old observed host key"))
-        );
-        assert!(
-            i.audit
-                .last()
-                .unwrap()
-                .subject
-                .contains(&host_fingerprint(b"new observed host key"))
-        );
-    }
-    #[test]
-    fn first_connection_and_unchanged_key_keep_original_flow() {
-        for first in [true, false] {
-            let f = Fixture::new();
-            let mut i = f.app.lock();
-            if first {
-                i.pins.remove("192.0.2.1:22");
-                i.trust.get_mut(&f.inspection).unwrap().previous_key = None;
-            } else {
-                i.trust.get_mut(&f.inspection).unwrap().key = f.old.clone();
-            }
-            drop(i);
-            assert!(f.confirm(false).is_ok());
-            assert_eq!(
-                f.app.lock().audit.last().unwrap().action,
-                "ssh_host_trusted"
-            );
-        }
-    }
-    #[test]
-    fn concurrent_trust_change_invalidates_old_confirmation() {
-        for concurrent in [
-            STANDARD.encode(b"third key"),
-            STANDARD.encode(b"new observed host key"),
-        ] {
-            let f = Fixture::new();
-            f.app
-                .lock()
-                .pins
-                .insert("192.0.2.1:22".into(), concurrent.clone());
-            assert_eq!(f.confirm(true).err().unwrap().status, 409);
-            assert_eq!(f.app.lock().pins["192.0.2.1:22"], concurrent);
-        }
-    }
-    #[test]
-    fn inspection_is_bound_to_login_and_expiry() {
-        let f = Fixture::new();
-        f.app
-            .lock()
-            .trust
-            .get_mut(&f.inspection)
-            .unwrap()
-            .session_id = token();
-        assert_eq!(f.confirm(true).err().unwrap().status, 400);
-        let mut i = f.app.lock();
-        let found = i.trust.get_mut(&f.inspection).unwrap();
-        found.session_id = f.context.sid.clone();
-        found.expires = now() - 1;
-        drop(i);
-        assert_eq!(f.confirm(true).err().unwrap().status, 400);
-        assert_eq!(f.stored()["192.0.2.1:22"], f.old);
-    }
-    #[test]
-    fn host_rotation_requires_admin_and_csrf() {
-        let mut f = Fixture::new();
-        f.context.headers.remove("X-CSRF-Token");
-        assert_eq!(f.confirm(true).err().unwrap().status, 403);
-        f.app.lock().sessions.get_mut(&f.context.sid).unwrap().auth = false;
-        assert_eq!(f.confirm(true).err().unwrap().status, 401);
-        assert_eq!(f.stored()["192.0.2.1:22"], f.old);
-    }
-    #[test]
-    fn failed_persistence_does_not_replace_in_memory_key() {
-        let f = Fixture::new();
-        let path = f.app.0.dir.join("ssh-pins.json");
-        std::fs::remove_file(&path).unwrap();
-        std::fs::create_dir(&path).unwrap();
-        assert_eq!(f.confirm(true).err().unwrap().status, 500);
-        let i = f.app.lock();
-        assert_eq!(i.pins["192.0.2.1:22"], f.old);
-        assert!(i.trust.contains_key(&f.inspection));
-        assert!(i.audit.is_empty());
-    }
-    #[test]
-    fn active_deployment_prevents_rotation() {
-        let f = Fixture::new();
-        let mut i = f.app.lock();
-        i.data.nodes.push(Node {
-            ip: "192.0.2.1".into(),
-            port: 22,
-            public: PublicNode {
-                id: "node".into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-        i.jobs.insert(
-            "job".into(),
-            DeployJob {
-                id: "job".into(),
-                node_id: "node".into(),
-                state: "running".into(),
-                message: String::new(),
-                started: now(),
-            },
-        );
-        drop(i);
-        assert_eq!(f.confirm(true).err().unwrap().status, 409);
-        assert_eq!(f.stored()["192.0.2.1:22"], f.old);
-    }
-    #[test]
-    fn confirmation_cannot_supply_its_own_key_or_target() {
-        for extra in [json!({"key":"injected"}), json!({"address":"192.0.2.3:22"})] {
-            let f = Fixture::new();
-            let mut body = json!({"inspection":f.inspection,"replace":true});
-            body.as_object_mut()
-                .unwrap()
-                .extend(extra.as_object().unwrap().clone());
-            assert_eq!(
-                trust(
-                    &f.app,
-                    &mut f.app.lock(),
-                    &f.context,
-                    &serde_json::to_vec(&body).unwrap()
-                )
-                .err()
-                .unwrap()
-                .status,
-                400
-            );
-            assert_eq!(f.stored()["192.0.2.1:22"], f.old);
-        }
-    }
     #[test]
     fn release_redirect_boundaries() {
         for url in [

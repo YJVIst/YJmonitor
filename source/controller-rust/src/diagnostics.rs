@@ -78,8 +78,12 @@ pub fn api(app: App, c: Context, body: Vec<u8>) -> ApiResult<ApiReply> {
         .iter()
         .find(|n| n.public.id == r.id)
         .ok_or_else(|| ApiError::new(404, "服务器不存在"))?;
-    let address =
-        target(&node.ip, node.port).ok_or_else(|| ApiError::new(400, "服务器连接地址不正确"))?;
+    let address = target(&node.ip, node.port)
+        .or_else(|| {
+            let ip = inner.ssh_dns.get(&node.ip)?.first()?;
+            target(&ip.to_string(), node.port)
+        })
+        .ok_or_else(|| ApiError::new(400, "服务器地址尚未解析，请稍后重试"))?;
     inner
         .routes
         .retain(|_, s| now() - s.touched < 600 || s.pinging || s.tracing);

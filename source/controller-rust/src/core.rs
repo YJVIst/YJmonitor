@@ -340,14 +340,6 @@ pub struct Ticket {
     pub expires: i64,
 }
 #[derive(Clone)]
-pub struct Trust {
-    pub session_id: String,
-    pub address: String,
-    pub key: String,
-    pub previous_key: Option<String>,
-    pub expires: i64,
-}
-#[derive(Clone)]
 pub struct App(pub Arc<Shared>);
 pub struct Shared {
     pub dir: PathBuf,
@@ -377,13 +369,12 @@ pub struct Inner {
     pub agents: HashMap<String, Arc<crate::realtime::AgentLink>>,
     pub agent_reserved: HashSet<String>,
     pub tickets: HashMap<String, Ticket>,
-    pub trust: HashMap<String, Trust>,
-    pub pins: HashMap<String, String>,
     pub jobs: HashMap<String, DeployJob>,
     pub enrollments: HashMap<String, crate::enrollment::Enrollment>,
     pub retained: HashMap<String, crate::retained::Retained>,
     pub file_sessions: HashMap<String, crate::file_sessions::TransferSession>,
     pub terminals: HashMap<String, HashMap<String, CancellationToken>>,
+    pub ssh_dns: HashMap<String, Vec<IpAddr>>,
     pub routes: HashMap<String, crate::diagnostics::State>,
     pub route_owners: crate::diagnostics::Owners,
     pub file_edits: HashSet<String>,
@@ -400,6 +391,11 @@ impl App {
     }
     pub fn new(dir: PathBuf, origin: String, php_gateway: bool) -> Result<Self, &'static str> {
         crate::backup::complete_restore(&dir)?;
+        match fs::remove_file(dir.join("ssh-pins.json")) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err("cannot retire obsolete SSH trust file"),
+        }
         let auth: Auth =
             read_json(&dir.join("auth.json")).map_err(|_| "authentication state unavailable")?;
         let mut data: Data =
@@ -491,17 +487,12 @@ impl App {
             agents: HashMap::new(),
             agent_reserved: HashSet::new(),
             tickets: HashMap::new(),
-            trust: HashMap::new(),
-            pins: match read_json(&dir.join("ssh-pins.json")) {
-                Ok(v) => v,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => HashMap::new(),
-                Err(_) => return Err("SSH trust state unavailable"),
-            },
             jobs: HashMap::new(),
             enrollments: HashMap::new(),
             retained: crate::retained::load(&dir)?,
             file_sessions: crate::file_sessions::load(&dir)?,
             terminals: HashMap::new(),
+            ssh_dns: HashMap::new(),
             routes: HashMap::new(),
             route_owners: crate::diagnostics::Owners::default(),
             file_edits: HashSet::new(),
