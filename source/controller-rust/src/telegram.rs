@@ -843,7 +843,6 @@ mod queue_tests {
             site: Site {
                 name: "QA".into(),
                 public: true,
-                refresh_seconds: 3,
             },
             ..Default::default()
         };

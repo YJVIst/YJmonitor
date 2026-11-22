@@ -139,3 +139,8 @@
 @media(prefers-reduced-motion:reduce){.board-meter i{transition:none}}
 #server-grid.many-nodes .server-card{content-visibility:auto;contain:layout paint style;contain-intrinsic-size:auto 395px;backdrop-filter:none;-webkit-backdrop-filter:none}
 .live-chart .chart-strip{will-change:transform}
+
+.enrollment-dialog{box-sizing:border-box;width:min(42rem,calc(100vw - 2rem));max-height:90dvh;overflow:auto}
+.enrollment-dialog textarea{display:block;box-sizing:border-box;width:100%;min-height:6rem;max-height:48dvh;padding:.75rem;border:1px solid var(--edge);border-radius:8px;background:var(--bg);color:var(--text);font: .875rem/1.5 ui-monospace,monospace;overflow-wrap:anywhere;resize:vertical}
+.enrollment-dialog .dialog-actions{flex-wrap:wrap}
+.live-chart .chart-strip svg{overflow:visible}

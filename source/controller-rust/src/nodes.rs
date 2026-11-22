@@ -40,7 +40,8 @@ struct RenewalInput {
 struct SiteInput {
     name: String,
     public: bool,
-    refresh_seconds: i64,
+    #[serde(rename = "refreshSeconds")]
+    _legacy_interval: Option<i64>,
 }
 #[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -499,10 +500,9 @@ pub fn site(app: &App, i: &mut Inner, c: &Context, body: &[u8]) -> ApiResult<Api
     let site = Site {
         name: v.name.trim().into(),
         public: v.public,
-        refresh_seconds: v.refresh_seconds,
     };
-    if !valid_text(&site.name, 60) || !(3..=30).contains(&site.refresh_seconds) {
-        return Err(ApiError::new(400, "请检查站点名称和刷新间隔（3–30 秒）"));
+    if !valid_text(&site.name, 60) {
+        return Err(ApiError::new(400, "请填写有效的站点名称（最多 60 个字符）"));
     }
     let mut data = i.data.clone();
     data.site = site.clone();
@@ -601,6 +601,18 @@ mod tests {
 #[cfg(test)]
 mod contract_tests {
     use super::*;
+    #[test]
+    fn site_accepts_current_and_legacy_refresh_settings() {
+        let current = json!({"name":"Board","public":true});
+        let mut legacy = current.clone();
+        legacy["refreshSeconds"] = json!(30);
+        for site in [current.clone(), legacy] {
+            let input: SiteInput = serde_json::from_value(site.clone()).unwrap();
+            assert_eq!(input.name, "Board");
+            let saved: Site = serde_json::from_value(site).unwrap();
+            assert_eq!(serde_json::to_value(saved).unwrap(), current);
+        }
+    }
     #[test]
     fn existing_browser_lease_payload() {
         let node:NodeInput=decode(br#"{"name":"node","ip":"192.0.2.1","port":22,"username":"root","visible":false,"providerName":"provider","providerURL":"https://example.com","expiresAt":"2026-10-01T00:00:00Z","notifyRenewal":true,"renewalVersion":"previous","country":"region","city":"","code":"IS"}"#).unwrap();

@@ -188,7 +188,6 @@ fn init(o: &Options) -> Result<(), &'static str> {
         site: Site {
             name: "羽迹探针".into(),
             public: true,
-            refresh_seconds: 3,
         },
         ..Default::default()
     };

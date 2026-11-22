@@ -202,8 +202,14 @@ fn dispatch(app: &App, c: &Context, body: &[u8]) -> ApiResult<ApiReply> {
             }
             if i.cache.as_ref().is_none_or(|(at, _)| *at != now()) {
                 #[derive(serde::Serialize)]
+                struct BoardNode<'a> {
+                    #[serde(flatten)]
+                    node: &'a crate::model::PublicNode,
+                    demo: bool,
+                }
+                #[derive(serde::Serialize)]
                 struct Board<'a> {
-                    nodes: Vec<&'a crate::model::PublicNode>,
+                    nodes: Vec<BoardNode<'a>>,
                     site: &'a crate::model::Site,
                     preview: bool,
                     #[serde(rename = "themeRevision")]
@@ -215,7 +221,10 @@ fn dispatch(app: &App, c: &Context, body: &[u8]) -> ApiResult<ApiReply> {
                         .nodes
                         .iter()
                         .filter(|n| n.visible && !n.removing)
-                        .map(|n| &n.public)
+                        .map(|n| BoardNode {
+                            node: &n.public,
+                            demo: n.demo,
+                        })
                         .collect(),
                     site: &i.data.site,
                     preview: i.data.preview,

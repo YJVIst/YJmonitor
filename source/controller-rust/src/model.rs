@@ -140,8 +140,6 @@ pub struct Site {
     pub name: String,
     #[serde(rename = "public")]
     pub public: bool,
-    #[serde(rename = "refreshSeconds")]
-    pub refresh_seconds: i64,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
