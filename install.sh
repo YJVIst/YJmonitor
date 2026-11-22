@@ -3,8 +3,8 @@ set +x
 set -Eeuo pipefail
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 umask 077
-readonly YUJI_VERSION=0.11.5
-readonly YUJI_RELEASE_BASE=https://github.com/YJVIst/YJmonitor/releases/download/v0.11.5
+readonly YUJI_VERSION=0.11.6
+readonly YUJI_RELEASE_BASE=https://github.com/YJVIst/YJmonitor/releases/download/v0.11.6
 readonly YUJI_PUBLIC_KEY=o8+DdHbo82V7fxJEIiEhe5AK/frR91Fz5vjf/pDAnts=
 yuji_work='' yuji_name='' yuji_port=19281 yuji_cache='' yuji_check=0 yuji_repair=0
 prepare_agent_release(){
@@ -26,8 +26,8 @@ import urllib.parse
 import urllib.request
 
 REPOSITORY = "YJVIst/YJmonitor"
-RELEASE_VERSION = "0.11.3"
-AGENT_VERSION = "0.2.3"
+RELEASE_VERSION = "0.11.6"
+AGENT_VERSION = "0.2.4"
 PUBLIC = "o8+DdHbo82V7fxJEIiEhe5AK/frR91Fz5vjf/pDAnts="
 PREFIX = f"/{REPOSITORY}/releases/download/v{RELEASE_VERSION}/"
 BASE = "https://github.com" + PREFIX

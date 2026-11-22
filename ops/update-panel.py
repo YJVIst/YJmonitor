@@ -123,19 +123,20 @@ def ownership(path,uid,gid):
         st=os.fstat(fd)
         if st.st_uid not in (0,uid):raise ValueError("unexpected private state owner")
         os.fchown(fd,uid,gid);os.fchmod(fd,0o700)
-        for entry in os.scandir(fd):
-            info=entry.stat(follow_symlinks=False)
-            if not(stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):raise ValueError("unsafe private state entry")
-            flags=os.O_RDONLY|os.O_NOFOLLOW|(os.O_DIRECTORY if stat.S_ISDIR(info.st_mode) else os.O_NONBLOCK)
-            child=os.open(entry.name,flags,dir_fd=fd)
-            try:
-                actual=os.fstat(child)
-                if actual.st_ino!=info.st_ino or actual.st_dev!=info.st_dev or actual.st_uid not in (0,uid):raise ValueError("private state changed")
-                if stat.S_ISDIR(actual.st_mode):visit(child)
-                else:
-                    if actual.st_nlink!=1:raise ValueError("hard-linked private state rejected")
-                    os.fchown(child,uid,gid);os.fchmod(child,0o600)
-            finally:os.close(child)
+        with os.scandir(fd) as entries:
+            for entry in entries:
+                info=entry.stat(follow_symlinks=False)
+                if not(stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):raise ValueError("unsafe private state entry")
+                flags=os.O_RDONLY|os.O_NOFOLLOW|(os.O_DIRECTORY if stat.S_ISDIR(info.st_mode) else os.O_NONBLOCK)
+                child=os.open(entry.name,flags,dir_fd=fd)
+                try:
+                    actual=os.fstat(child)
+                    if actual.st_ino!=info.st_ino or actual.st_dev!=info.st_dev or actual.st_uid not in (0,uid):raise ValueError("private state changed")
+                    if stat.S_ISDIR(actual.st_mode):visit(child)
+                    else:
+                        if actual.st_nlink!=1:raise ValueError("hard-linked private state rejected")
+                        os.fchown(child,uid,gid);os.fchmod(child,0o600)
+                finally:os.close(child)
     try:visit(root)
     finally:os.close(root)
 def safe_snapshot(source,dest,uid,allow_owner=None):
@@ -147,25 +148,26 @@ def safe_snapshot(source,dest,uid,allow_owner=None):
         target.mkdir(mode=0o700)
         st=os.fstat(current)
         if st.st_uid not in owners:raise ValueError("unexpected state owner")
-        for entry in os.scandir(current):
-            info=entry.stat(follow_symlinks=False)
-            if info.st_uid not in owners or not(stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):raise ValueError("unsafe state entry")
-            flags=os.O_RDONLY|os.O_NOFOLLOW|(os.O_DIRECTORY if stat.S_ISDIR(info.st_mode) else 0)
-            child=os.open(entry.name,flags,dir_fd=current)
-            try:
-                actual=os.fstat(child)
-                if actual.st_ino!=info.st_ino or actual.st_dev!=info.st_dev:raise ValueError("state changed while copying")
-                if stat.S_ISDIR(actual.st_mode):copy_dir(child,target/entry.name)
-                else:
-                    if actual.st_nlink!=1 or actual.st_size>256*1024*1024:raise ValueError("unsafe state file")
-                    with os.fdopen(os.dup(child),"rb") as src,(target/entry.name).open("xb") as out:
-                        shutil.copyfileobj(src,out,65536)
-                        if out.tell()!=actual.st_size or os.fstat(child).st_mtime_ns!=actual.st_mtime_ns:
-                            raise ValueError("state changed while copying")
-                        out.flush()
-                        os.fsync(out.fileno())
-                    (target/entry.name).chmod(0o600)
-            finally:os.close(child)
+        with os.scandir(current) as entries:
+            for entry in entries:
+                info=entry.stat(follow_symlinks=False)
+                if info.st_uid not in owners or not(stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):raise ValueError("unsafe state entry")
+                flags=os.O_RDONLY|os.O_NOFOLLOW|(os.O_DIRECTORY if stat.S_ISDIR(info.st_mode) else 0)
+                child=os.open(entry.name,flags,dir_fd=current)
+                try:
+                    actual=os.fstat(child)
+                    if actual.st_ino!=info.st_ino or actual.st_dev!=info.st_dev:raise ValueError("state changed while copying")
+                    if stat.S_ISDIR(actual.st_mode):copy_dir(child,target/entry.name)
+                    else:
+                        if actual.st_nlink!=1 or actual.st_size>256*1024*1024:raise ValueError("unsafe state file")
+                        with os.fdopen(os.dup(child),"rb") as src,(target/entry.name).open("xb") as out:
+                            shutil.copyfileobj(src,out,65536)
+                            if out.tell()!=actual.st_size or os.fstat(child).st_mtime_ns!=actual.st_mtime_ns:
+                                raise ValueError("state changed while copying")
+                            out.flush()
+                            os.fsync(out.fileno())
+                        (target/entry.name).chmod(0o600)
+                finally:os.close(child)
     try:copy_dir(fd,dest)
     finally:os.close(fd)
 class RecoveryError(RuntimeError):

@@ -765,7 +765,10 @@ impl Inner {
             };
         }
         if a.count >= limit {
-            return Err(ApiError::rate("请求过于频繁，请稍后重试", 60));
+            return Err(ApiError::rate(
+                "请求过于频繁，请稍后重试",
+                (a.until.timestamp() - t).clamp(1, 60) as u16,
+            ));
         }
         a.count += 1;
         Ok(())

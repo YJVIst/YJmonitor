@@ -34,7 +34,9 @@ export function initAdmin(hooks){
    if(!response.ok){
     if(response.status===428){await operations.reauth();return api(path,method,body);}
     if(response.status===401&&path!=='/api/login')loseAuth();
-    const error=Error(data.error||'请求失败');error.status=response.status;throw error;
+    const error=Error(data.error||'请求失败');error.status=response.status;
+    if(response.status===429)error.retryAfter=Math.min(60,Math.max(1,Number(response.headers.get('Retry-After'))||60));
+    throw error;
    }
    if(changesSession&&typeof data.csrf==='string'){auth=data;csrf=data.csrf;authUI();}
    return data;
@@ -51,9 +53,10 @@ export function initAdmin(hooks){
   const currentIP=record.resolvedIPs?.length?record.resolvedIPs.join('、'):record.agentPeerIP||record.detectedIP||record.ip;
   return {...record,currentIP};
  }
- let boardRead=null;
+ let boardRead=null,boardRetryUntil=0;
  function cancelBoardRead(){boardRead?.abort();}
  async function refresh(background=false){
+  if(background&&Date.now()<boardRetryUntil)return;
   if(loading){if(!background)refreshQueued=true;return;}
   loading=true;
   const read=new AbortController();boardRead=read;
@@ -66,6 +69,7 @@ export function initAdmin(hooks){
    const result=await api(asAdmin?'/api/admin/nodes':'/api/public/nodes','GET',undefined,{signal:read.signal});
    if(timedOut)throw Error('实时数据读取超时');
    if(read.signal.aborted||epoch!==sessionEpoch)return;
+   boardRetryUntil=0;
    if(siteVersion===siteEpoch)site=result.site;
    records=asAdmin?result.nodes.map(withCurrentIP):[];
    const publicNodes=asAdmin?records.map(n=>({...n.public,demo:n.demo})):result.nodes;
@@ -79,6 +83,7 @@ export function initAdmin(hooks){
    }
   }catch(error){
    if(error.staleSession||(read.signal.aborted&&!timedOut))return;
+   if(error.status===429)boardRetryUntil=Date.now()+1000*error.retryAfter;
    const denied=error.status===403||error.status===401;
    hooks.onLoadError(timedOut?'实时数据读取超时':error.message,denied);
    if(!background&&!denied)toast(error.message,true);

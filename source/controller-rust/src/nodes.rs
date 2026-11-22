@@ -261,20 +261,20 @@ pub fn save_node(
             ..Default::default()
         }
     };
-    if !id.is_empty()
-        && (n.ip != v.ip || n.port != v.port || n.username != v.username)
+    let restricted_change = n.port != v.port
+        || n.username != v.username
+        || (n.ip != v.ip && v.ip.parse::<std::net::IpAddr>().is_ok());
+    if restricted_change
+        && !id.is_empty()
         && i.data
             .secrets
             .get(id)
             .is_some_and(|s| !s.ssh_key.is_empty())
     {
-        if n.port != v.port || n.username != v.username || v.ip.parse::<std::net::IpAddr>().is_ok()
-        {
-            return Err(ApiError::new(
-                409,
-                "已接入节点可以改用 SSH 域名，请保留原端口和用户名",
-            ));
-        }
+        return Err(ApiError::new(
+            409,
+            "已接入节点可以改用 SSH 域名，请保留原端口和用户名",
+        ));
     }
     lease(&mut n, &v, !id.is_empty())?;
     if let Some(group) = &v.group {

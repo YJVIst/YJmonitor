@@ -15,8 +15,8 @@ import urllib.parse
 import urllib.request
 
 REPOSITORY = "YJVIst/YJmonitor"
-RELEASE_VERSION = "0.11.3"
-AGENT_VERSION = "0.2.3"
+RELEASE_VERSION = "0.11.6"
+AGENT_VERSION = "0.2.4"
 PUBLIC = "o8+DdHbo82V7fxJEIiEhe5AK/frR91Fz5vjf/pDAnts="
 PREFIX = f"/{REPOSITORY}/releases/download/v{RELEASE_VERSION}/"
 BASE = "https://github.com" + PREFIX

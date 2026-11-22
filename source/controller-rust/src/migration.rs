@@ -166,12 +166,12 @@ fn start_next(app: &App) {
                 }
             }
         }
-        if result.is_ok() && task.action == "remove" {
-            if crate::nodes::finish_removal(&app, &mut i, &id).is_err()
-                && let Some(t) = i.ops.transfers.get_mut(&id)
-            {
-                t.message = "远端清理已完成，请再次移除以完成本地保存".into();
-            }
+        if result.is_ok()
+            && task.action == "remove"
+            && crate::nodes::finish_removal(&app, &mut i, &id).is_err()
+            && let Some(t) = i.ops.transfers.get_mut(&id)
+        {
+            t.message = "远端清理已完成，请再次移除以完成本地保存".into();
         }
         app.record(
             &mut i,

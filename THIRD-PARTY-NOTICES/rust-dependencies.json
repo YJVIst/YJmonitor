@@ -448,12 +448,12 @@
   },
   {
     "name": "crypto-bigint",
-    "version": "0.7.5",
+    "version": "0.7.11",
     "license": "Apache-2.0 OR MIT",
     "repository": "https://github.com/RustCrypto/crypto-bigint",
     "licenseFiles": [
-      "rust-licenses/crypto-bigint-0.7.5-LICENSE-APACHE",
-      "rust-licenses/crypto-bigint-0.7.5-LICENSE-MIT"
+      "rust-licenses/crypto-bigint-0.7.11-LICENSE-APACHE",
+      "rust-licenses/crypto-bigint-0.7.11-LICENSE-MIT"
     ]
   },
   {
@@ -498,12 +498,12 @@
   },
   {
     "name": "ctutils",
-    "version": "0.4.2",
+    "version": "0.4.8",
     "license": "Apache-2.0 OR MIT",
     "repository": "https://github.com/RustCrypto/utils",
     "licenseFiles": [
-      "rust-licenses/ctutils-0.4.2-LICENSE-APACHE",
-      "rust-licenses/ctutils-0.4.2-LICENSE-MIT"
+      "rust-licenses/ctutils-0.4.8-LICENSE-APACHE",
+      "rust-licenses/ctutils-0.4.8-LICENSE-MIT"
     ]
   },
   {
@@ -770,12 +770,12 @@
   },
   {
     "name": "form_urlencoded",
-    "version": "1.2.2",
+    "version": "1.2.3",
     "license": "MIT OR Apache-2.0",
     "repository": "https://github.com/servo/rust-url",
     "licenseFiles": [
-      "rust-licenses/form_urlencoded-1.2.2-LICENSE-APACHE",
-      "rust-licenses/form_urlencoded-1.2.2-LICENSE-MIT"
+      "rust-licenses/form_urlencoded-1.2.3-LICENSE-APACHE",
+      "rust-licenses/form_urlencoded-1.2.3-LICENSE-MIT"
     ]
   },
   {
@@ -1615,12 +1615,12 @@
   },
   {
     "name": "pkcs1",
-    "version": "0.8.0-rc.4",
+    "version": "0.8.0",
     "license": "Apache-2.0 OR MIT",
     "repository": "https://github.com/RustCrypto/formats",
     "licenseFiles": [
-      "rust-licenses/pkcs1-0.8.0-rc.4-LICENSE-APACHE",
-      "rust-licenses/pkcs1-0.8.0-rc.4-LICENSE-MIT"
+      "rust-licenses/pkcs1-0.8.0-LICENSE-APACHE",
+      "rust-licenses/pkcs1-0.8.0-LICENSE-MIT"
     ]
   },
   {
@@ -1878,12 +1878,12 @@
   },
   {
     "name": "rsa",
-    "version": "0.10.0-rc.18",
+    "version": "0.10.0",
     "license": "MIT OR Apache-2.0",
     "repository": "https://github.com/RustCrypto/RSA",
     "licenseFiles": [
-      "rust-licenses/rsa-0.10.0-rc.18-LICENSE-APACHE",
-      "rust-licenses/rsa-0.10.0-rc.18-LICENSE-MIT"
+      "rust-licenses/rsa-0.10.0-LICENSE-APACHE",
+      "rust-licenses/rsa-0.10.0-LICENSE-MIT"
     ]
   },
   {
@@ -1930,24 +1930,25 @@
   },
   {
     "name": "rustix",
-    "version": "1.1.5",
+    "version": "1.1.6",
     "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
     "repository": "https://github.com/bytecodealliance/rustix",
     "licenseFiles": [
-      "rust-licenses/rustix-1.1.5-LICENSE-APACHE",
-      "rust-licenses/rustix-1.1.5-LICENSE-Apache-2.0_WITH_LLVM-exception",
-      "rust-licenses/rustix-1.1.5-LICENSE-MIT"
+      "rust-licenses/rustix-1.1.6-COPYRIGHT",
+      "rust-licenses/rustix-1.1.6-LICENSE-APACHE",
+      "rust-licenses/rustix-1.1.6-LICENSE-Apache-2.0_WITH_LLVM-exception",
+      "rust-licenses/rustix-1.1.6-LICENSE-MIT"
     ]
   },
   {
     "name": "rustls",
-    "version": "0.23.45",
+    "version": "0.23.46",
     "license": "Apache-2.0 OR ISC OR MIT",
     "repository": "https://github.com/rustls/rustls",
     "licenseFiles": [
-      "rust-licenses/rustls-0.23.45-LICENSE-APACHE",
-      "rust-licenses/rustls-0.23.45-LICENSE-ISC",
-      "rust-licenses/rustls-0.23.45-LICENSE-MIT"
+      "rust-licenses/rustls-0.23.46-LICENSE-APACHE",
+      "rust-licenses/rustls-0.23.46-LICENSE-ISC",
+      "rust-licenses/rustls-0.23.46-LICENSE-MIT"
     ]
   },
   {
@@ -1991,11 +1992,11 @@
   },
   {
     "name": "rustls-webpki",
-    "version": "0.103.15",
+    "version": "0.103.17",
     "license": "ISC",
     "repository": "https://github.com/rustls/webpki",
     "licenseFiles": [
-      "rust-licenses/rustls-webpki-0.103.15-LICENSE"
+      "rust-licenses/rustls-webpki-0.103.17-LICENSE"
     ]
   },
   {
@@ -2338,12 +2339,12 @@
   },
   {
     "name": "spki",
-    "version": "0.8.0",
+    "version": "0.8.1",
     "license": "Apache-2.0 OR MIT",
     "repository": "https://github.com/RustCrypto/formats",
     "licenseFiles": [
-      "rust-licenses/spki-0.8.0-LICENSE-APACHE",
-      "rust-licenses/spki-0.8.0-LICENSE-MIT"
+      "rust-licenses/spki-0.8.1-LICENSE-APACHE",
+      "rust-licenses/spki-0.8.1-LICENSE-MIT"
     ]
   },
   {
@@ -2378,12 +2379,12 @@
   },
   {
     "name": "ssh-key",
-    "version": "0.7.0-rc.11",
+    "version": "0.7.0-rc.12",
     "license": "Apache-2.0 OR MIT",
     "repository": "https://github.com/RustCrypto/SSH",
     "licenseFiles": [
-      "rust-licenses/ssh-key-0.7.0-rc.11-LICENSE-APACHE",
-      "rust-licenses/ssh-key-0.7.0-rc.11-LICENSE-MIT"
+      "rust-licenses/ssh-key-0.7.0-rc.12-LICENSE-APACHE",
+      "rust-licenses/ssh-key-0.7.0-rc.12-LICENSE-MIT"
     ]
   },
   {
@@ -2484,11 +2485,11 @@
   },
   {
     "name": "tokio",
-    "version": "1.53.1",
+    "version": "1.54.1",
     "license": "MIT",
     "repository": "https://github.com/tokio-rs/tokio",
     "licenseFiles": [
-      "rust-licenses/tokio-1.53.1-LICENSE"
+      "rust-licenses/tokio-1.54.1-LICENSE"
     ]
   },
   {
@@ -2663,12 +2664,12 @@
   },
   {
     "name": "url",
-    "version": "2.5.8",
+    "version": "2.5.9",
     "license": "MIT OR Apache-2.0",
     "repository": "https://github.com/servo/rust-url",
     "licenseFiles": [
-      "rust-licenses/url-2.5.8-LICENSE-APACHE",
-      "rust-licenses/url-2.5.8-LICENSE-MIT"
+      "rust-licenses/url-2.5.9-LICENSE-APACHE",
+      "rust-licenses/url-2.5.9-LICENSE-MIT"
     ]
   },
   {
@@ -2795,11 +2796,11 @@
   },
   {
     "name": "webpki-root-certs",
-    "version": "1.0.9",
+    "version": "1.0.12",
     "license": "CDLA-Permissive-2.0",
     "repository": "https://github.com/rustls/webpki-roots",
     "licenseFiles": [
-      "rust-licenses/webpki-root-certs-1.0.9-LICENSE"
+      "rust-licenses/webpki-root-certs-1.0.12-LICENSE"
     ]
   },
   {
