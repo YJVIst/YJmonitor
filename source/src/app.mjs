@@ -8,11 +8,9 @@ import {createNetworkUI} from './network.mjs';
 const $=selector=>document.querySelector(selector);
 const NS='http://www.w3.org/2000/svg';
 const format=new Intl.NumberFormat('zh-CN',{maximumFractionDigits:2});
-const clock=new Intl.DateTimeFormat('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
 const nodes=[];
 let admin=null;
-let demoMode=false;
-const state={status:'all',country:'all',group:'all',query:'',sort:'default',running:true,step:0,updated:null,dialogId:null,stale:false};
+const state={status:'all',country:'all',group:'all',query:'',sort:'default',step:0,dialogId:null};
 const glyphs={
  settings:['M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1 1-3z','M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0'],
  terminal:['M3 4h18v16H3z','m7 9 3 3-3 3m6 0h4'],shield:['M12 3 4 6v6c0 4 5 8 8 9 3-1 8-5 8-9V6l-8-3z','m8 12 3 3 5-6'],
@@ -29,7 +27,6 @@ const glyphs={
  swap:['M4 8h15m-4-4 4 4-4 4','M20 16H5m4-4-4 4 4 4'],
  clock:['M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0','M12 7v5l3 2'],
  refresh:['M20 8a8 8 0 0 0-14-3L3 8','M3 3v5h5','M4 16a8 8 0 0 0 14 3l3-3','M21 21v-5h-5'],
- pause:['M8 5v14M16 5v14'],play:['m8 5 11 7-11 7V5z'],
  moon:['M20.8 13A9 9 0 0 1 11 3.2 9 9 0 1 0 20.8 13z'],
  sun:['M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0','M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.4 1.4m11.2 11.2L19 19M5 19l1.4-1.4M17.6 6.4 19 5'],
  close:['m6 6 12 12M6 18 18 6'],server:['M4 3h16v7H4zM4 14h16v7H4z','M7 6.5h.1M7 17.5h.1M12 6.5h5M12 17.5h5']
@@ -119,7 +116,7 @@ function plotHistory(view,samples,motion,at,defaultPeriod){
 function updateMetrics(view){
  const n=view.node;
  if(!view.resources)buildMetrics(view);
- const at=performance.now(),motion=!!view.sampleAt&&at-view.sampleAt<2500&&n.online&&state.running&&!reducedMotion.matches;
+ const at=performance.now(),motion=!!view.sampleAt&&at-view.sampleAt<2500&&n.online&&!reducedMotion.matches;
  const period=n.demo?1000:3000;
  view.sampleAt=at;
  const painted=view.lastPainted;
@@ -213,15 +210,6 @@ $('#country-filter').addEventListener('change',event=>{state.country=event.targe
 $('#group-filter').addEventListener('change',event=>{state.group=event.target.value;boardPager.reset();render();});
 $('#sort').addEventListener('change',event=>{state.sort=event.target.value;boardPager.reset();render();});
 $('#clear-filters').addEventListener('click',()=>{state.query='';state.status='all';state.country='all';state.group='all';$('#group-filter').value='all';state.sort='default';$('#search').value='';$('#country-filter').value='all';$('#sort').value='default';boardPager.reset();render();$('#search').focus();});
-function updateRefresh(){
- const active=state.running,button=$('#refresh-toggle');
- button.setAttribute('aria-pressed',String(active));button.setAttribute('aria-label',active?'暂停实时刷新':'继续实时刷新');
- setText($('#refresh-label'),!active?'已暂停刷新':state.stale?'重新连接中':demoMode?'演示自动刷新':'实时刷新');
- const glyph=active?'pause':'play',holder=$('.refresh-icon');
- if(holder.dataset.glyph!==glyph){holder.dataset.glyph=glyph;holder.replaceChildren(icon(glyph));}
- setText($('#refresh-time'),state.updated?clock.format(state.updated):'—');
-}
-$('#refresh-toggle').addEventListener('click',()=>{state.running=!state.running;restartPolling();updateRefresh();});
 function showDetail(node){const root=$('#dialog-content');const heading=el('div','dialog-header');const flagWrap=el('span','flag-wrap');flagWrap.append(flag(node.code));const titles=el('div');const title=el('h2','',node.name);title.id='dialog-title';titles.append(title,el('p','node-location',locationLabel(node)));heading.append(flagWrap,titles,statusBadge(node));const hardware=el('div','detail-hardware');for(const [label,value]of [['CPU 型号',node.cpuModel],['核心 / 架构',node.cores+' vCPU · '+node.arch],['操作系统',node.system],['主控通讯延时',latencyReading(node)],['运行时间',node.online?node.uptime:'离线 · 等待上报']]){const block=el('dl');block.append(el('dt','',label),el('dd','',value));if(label==='主控通讯延时')block.dataset.metric='latency';hardware.append(block);}const sections=[heading,hardware];if(node.online){const chart=el('section','detail-chart');const chartHeader=el('div','section-heading');chartHeader.append(el('h3','','CPU 使用率'),el('span','',node.cpu.toFixed(1)+(node.demo?'% · 演示趋势':'% · 实时采样')));const chartSvg=sparkline(node.history,true);chartSvg.removeAttribute('aria-hidden');chartSvg.setAttribute('role','img');chartSvg.setAttribute('aria-label',(node.demo?'CPU 使用率演示曲线，当前 ':'CPU 使用率曲线，当前 ')+node.cpu.toFixed(1)+'%');const axis=el('div','chart-axis');axis.append(el('span','','最近 2 分钟'),el('span','','现在'));chart.append(chartHeader,chartSvg,axis);sections.push(chart);}else{sections.push(el('p','dialog-notice','最后一次上报于 '+node.lastSeenMinutes+' 分钟前。节点离线后暂停显示使用率，避免将过期数据作为当前状态。'));}const resources=el('div','detail-resource-row');resources.append(resource('内存','memory',node.memory,node.online));if(hasSwap(node))resources.append(resource('Swap','swap',node.swap,node.online));sections.push(resources);const disks=el('section');const label=el('div','section-heading');label.append(el('h3','','磁盘'),el('span','',node.disks.length+' 个卷 · 容量单位 GiB'));const list=el('ul','disk-list');for(const disk of node.disks){const item=el('li','disk-item');const row=el('div','disk-row');row.append(el('strong','',disk.name),el('span','',(node.online?display(disk.used):'—')+' / '+display(disk.total)+' GiB'));item.append(row,meter(node.online?percent(disk.used,disk.total):null,disk.name+'使用率'));list.append(item);}disks.append(label,list);sections.push(disks);sections.push(networkUI.detail(node));root.replaceChildren(...sections);admin?.decorateDetail(root,node);}
 let dialogTrigger=null;
 function openDetail(id){const node=nodes.find(n=>n.id===id);if(!node)return;dialogTrigger={id,detail:document.activeElement?.classList.contains('detail-link')};state.dialogId=id;showDetail(node);$('#node-dialog').showModal();$('#dialog-close').focus();}
@@ -246,7 +234,7 @@ function updateFilterOptions(select,values,label,prefix){
 }
 function applyData(list,site,preview,themeRevision){
  refreshAppearance(themeRevision);
- demoMode=preview;applySite(site);state.stale=false;state.updated=new Date();
+ applySite(site);
  const oldById=list.some(n=>n.demo)?new Map(nodes.map(n=>[n.id,n])):null;
  let layoutUnchanged=nodes.length>0&&nodes.length===list.length&&boardAdmin===admin?.isAdmin();
  state.step++;
@@ -283,18 +271,17 @@ function applyData(list,site,preview,themeRevision){
    for(const n of nodes){const view=cardViews.get(n.id);if(view)patchCard(view,n,records?.get(n.id));}
   }else render();
  }
- updateRefresh();
  if(state.dialogId){
   const current=nodes.find(node=>node.id===state.dialogId);
   if(current)showDetail(current);else $('#node-dialog').close();
  }
 }
-admin=initAdmin({el,icon,flag,setData:applyData,setSite:applySite,onBoardOpen:render,onLogout:()=>{$('#node-dialog').close();$('#dialog-content').replaceChildren();nodes.splice(0);render();},onLoadError:(message,denied)=>{if(!denied&&nodes.length){state.stale=true;updateRefresh();return;}$('#node-dialog').close();$('#dialog-content').replaceChildren();nodes.splice(0);syncCards([]);$('#server-grid').hidden=true;$('#empty-state').hidden=false;$('#empty-description').textContent=message;$('.demo-label').textContent='连接中断';}});
-render();updateRefresh();
+admin=initAdmin({el,icon,flag,setData:applyData,setSite:applySite,onBoardOpen:render,onLogout:()=>{$('#node-dialog').close();$('#dialog-content').replaceChildren();nodes.splice(0);render();},onLoadError:(message,denied)=>{if(!denied&&nodes.length){setText($('.demo-label'),'重新连接中');return;}$('#node-dialog').close();$('#dialog-content').replaceChildren();nodes.splice(0);syncCards([]);$('#server-grid').hidden=true;$('#empty-state').hidden=false;$('#empty-description').textContent=message;$('.demo-label').textContent='连接中断';}});
+render();
 let pollTimer, pollGeneration=0;
 function schedulePoll(generation,delay){
  pollTimer=setTimeout(async()=>{
-  if(generation!==pollGeneration||document.hidden||!state.running)return;
+  if(generation!==pollGeneration||document.hidden)return;
   const start=performance.now();
   await admin.refresh(true);
   if(generation!==pollGeneration)return;
@@ -307,7 +294,7 @@ function restartPolling(){
  const generation=++pollGeneration;
  admin.cancelBoardRead();
  for(const view of visibleCards){view.sampleAt=0;view.motion?.cancel();view.motion=null;}
- if(!document.hidden&&state.running)schedulePoll(generation,0);
+ if(!document.hidden)schedulePoll(generation,0);
 }
 document.addEventListener('visibilitychange',restartPolling);
 window.addEventListener('pageshow',event=>{if(event.persisted)restartPolling();});
