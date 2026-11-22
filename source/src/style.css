@@ -144,3 +144,5 @@
 .enrollment-dialog textarea{display:block;box-sizing:border-box;width:100%;min-height:6rem;max-height:48dvh;padding:.75rem;border:1px solid var(--edge);border-radius:8px;background:var(--bg);color:var(--text);font: .875rem/1.5 ui-monospace,monospace;overflow-wrap:anywhere;resize:vertical}
 .enrollment-dialog .dialog-actions{flex-wrap:wrap}
 .live-chart .chart-strip svg{overflow:visible}
+
+.detail-chart .live-chart{height:100px}

@@ -64,10 +64,17 @@ fn run_main() -> Result<()> {
                 if let Ok(value)=value{metrics_tx.send_replace(Some(value));}
             }
         });
+        let (health_tx,health_rx)=watch::channel(None);
+        let health_config=config.clone();
+        let health_task=tokio::spawn(async move {
+            vistart_probe_agent::management::report_health(path,&health_config,health_rx).await;
+        });
+        let mut generation=0;
         let mut delay=Duration::from_secs(1);
         loop{
+            generation+=1;
             let started=Instant::now();
-            tokio::select!{_=stop.cancelled()=>break,_=connection::connect(&config,&path,tls.clone(),metrics_rx.clone(),stop.clone())=>{}}
+            tokio::select!{_=stop.cancelled()=>break,_=connection::connect(&config,&health_tx,generation,tls.clone(),metrics_rx.clone(),stop.clone())=>{}}
             if stop.is_cancelled(){break;}
             if started.elapsed()>Duration::from_secs(60){delay=Duration::from_secs(1);}
             let mut random=[0u8;2];
@@ -77,6 +84,7 @@ fn run_main() -> Result<()> {
             tokio::select!{_=stop.cancelled()=>break,_=tokio::time::sleep(delay+Duration::from_millis(u64::from(jitter)))=>{}}
             delay=(delay*2).min(Duration::from_secs(32));
         }
+        drop(health_tx);let _=health_task.await;
         stop.cancel();country_task.abort();sample_task.abort();let _=country_task.await;let _=sample_task.await;Ok(())
     })
 }

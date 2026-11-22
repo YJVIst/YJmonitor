@@ -466,10 +466,61 @@ fn constant(a: &[u8], b: &[u8]) -> bool {
     a.ct_eq(b).into()
 }
 
-pub fn health(path: &Path, config: &Config) {
-    let value = serde_json::json!({"node_id":config.node_id,"controller_url":config.controller_url,"version":VERSION,"credential_digest":hex_digest(config.token.as_bytes()),"at":stamp()});
-    if let Ok(raw) = serde_json::to_vec(&value) {
-        let _ = atomic(&path.with_file_name("agent.health"), &raw, 0o600);
+#[derive(Clone, Copy)]
+pub struct HealthAck {
+    generation: u64,
+    received: std::time::Instant,
+    at: u64,
+}
+impl HealthAck {
+    pub fn new(generation: u64) -> Self {
+        Self {
+            generation,
+            received: std::time::Instant::now(),
+            at: stamp(),
+        }
+    }
+    fn due(self, previous: Option<Self>) -> bool {
+        previous.is_none_or(|last| {
+            last.generation != self.generation
+                || self.received.duration_since(last.received) >= Duration::from_secs(30)
+        })
+    }
+}
+pub async fn report_health(
+    path: PathBuf,
+    config: &Config,
+    mut acks: tokio::sync::watch::Receiver<Option<HealthAck>>,
+) {
+    let path = std::sync::Arc::new(path.with_file_name("agent.health"));
+    let identity = std::sync::Arc::new(
+        serde_json::json!({"node_id":config.node_id,"controller_url":config.controller_url,"version":VERSION,"credential_digest":hex_digest(config.token.as_bytes())}),
+    );
+    let mut previous = None;
+    while acks.changed().await.is_ok() {
+        let Some(ack) = *acks.borrow_and_update() else {
+            continue;
+        };
+        if !ack.due(previous) {
+            continue;
+        }
+        let path = path.clone();
+        let identity = identity.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let mut value = (*identity).clone();
+            value["at"] = ack.at.into();
+            atomic(
+                &path,
+                &serde_json::to_vec(&value).map_err(|_| "health encoding failed")?,
+                0o600,
+            )
+        })
+        .await;
+        if matches!(result, Ok(Ok(()))) {
+            previous = Some(ack);
+        } else {
+            eprintln!("Agent health persistence unavailable");
+        }
     }
 }
 fn wait_health(path: &Path, config: &Config, after: u64, version: Option<&str>) -> Result<()> {
@@ -494,6 +545,50 @@ fn wait_health(path: &Path, config: &Config, after: u64, version: Option<&str>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn first_ack_reconnect_and_upgrade_proof() {
+        let dir = std::env::temp_dir().join(format!("yuji-health-{}", std::process::id()));
+        fs::create_dir(&dir).unwrap();
+        let path = dir.join("config.json");
+        let config = Config {
+            node_id: "testnode".into(),
+            token: "a".repeat(64),
+            controller_url: "wss://test.invalid/api/agent".into(),
+            ssh_port: 22,
+        };
+        let (tx, rx) = tokio::sync::watch::channel(None);
+        let cfg = config.clone();
+        let location = path.clone();
+        let worker = tokio::spawn(async move {
+            report_health(location, &cfg, rx).await;
+        });
+        let start = HealthAck::new(1);
+        for (seconds, generation, expected) in [
+            (0, 1, true),
+            (3, 1, false),
+            (27, 1, false),
+            (30, 1, true),
+            (3, 2, true),
+        ] {
+            let ack = HealthAck {
+                generation,
+                received: start.received + Duration::from_secs(seconds),
+                at: start.at + seconds,
+            };
+            assert_eq!(
+                ack.due(if seconds == 0 { None } else { Some(start) }),
+                expected
+            );
+        }
+        tx.send_replace(Some(start));
+        drop(tx);
+        worker.await.unwrap();
+        wait_health(&path, &config, start.at - 1, Some(VERSION)).unwrap();
+        let data: serde_json::Value =
+            serde_json::from_slice(&fs::read(dir.join("agent.health")).unwrap()).unwrap();
+        assert_eq!(data["at"], start.at);
+        fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn immutable_layout() {
         assert!(layout(Path::new("/etc/passwd")).is_err());

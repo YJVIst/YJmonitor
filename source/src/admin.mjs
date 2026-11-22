@@ -5,7 +5,6 @@ import {setupLeaseFields,leaseInput,money,cycleLabel,showBilling} from './billin
 import {createInspectorUI} from './inspector.mjs';
 import {createOperations} from './operations.mjs';
 import {authenticatorCanvas} from './authenticator.mjs';
-import {createTerminalUI} from './terminal.mjs';
 import {countries as allCountries} from './countries.mjs';
 import {createRenewalUI,formatExpiry,localExpiry} from './renewals.mjs';
 export function initAdmin(hooks){
@@ -46,7 +45,7 @@ export function initAdmin(hooks){
  function wireDialog(dialog){for(const button of dialog.querySelectorAll('.dialog-dismiss')){button.replaceChildren(icon('close'));button.addEventListener('click',()=>dialog.close());}dialog.addEventListener('keydown',e=>{if(e.key!=='Tab')return;const controls=Array.from(dialog.querySelectorAll('button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')).filter(e=>e.getClientRects().length>0);const first=controls[0],last=controls.at(-1);if(!first)return;if(controls.length===1||(e.shiftKey&&document.activeElement===first)||(!e.shiftKey&&document.activeElement===last)){e.preventDefault();(e.shiftKey?last:first).focus();}});}
  for(const id of ['#login-dialog','#node-editor','#delete-dialog','#terminal-dialog','#command-editor','#terminal-paste-dialog','#renewal-dialog'])wireDialog($(id));
  function authUI(){$('#login-mfa-field').hidden=!auth.mfaRequired;$('#login-form').elements.code.required=!!auth.mfaRequired;const admin=auth.authenticated;$('#admin-badge').hidden=!admin;$('#admin-entry').setAttribute('aria-label',admin?'打开管理后台':'管理员登录');$('#admin-entry').replaceChildren(icon('settings'));}
- function loseAuth(){enrollmentDialog.close();terminalUI.close(true);inspectorUI.close();operations.clear();renewalUI.clear();sessionEpoch++;auth={authenticated:false};csrf='';records=[];commands=[];serverUI.clear();$('#command-form').reset();adminOpen=false;$('#admin-view').hidden=true;$('#admin-view').replaceChildren();$('#main-content').hidden=false;for(const p of document.querySelectorAll('.admin-ip-row'))p.remove();for(const id of ['#node-editor','#delete-dialog','#terminal-dialog','#command-editor','#terminal-paste-dialog'])closeDialog(id);$('#node-form').reset();if($('#terminal-target'))$('#terminal-target').textContent='';authUI();hooks.onLogout?.();}
+ function loseAuth(){enrollmentDialog.close();terminalUI?.close(true);inspectorUI.close();operations.clear();renewalUI.clear();sessionEpoch++;auth={authenticated:false};csrf='';records=[];commands=[];serverUI.clear();$('#command-form').reset();adminOpen=false;$('#admin-view').hidden=true;$('#admin-view').replaceChildren();$('#main-content').hidden=false;for(const p of document.querySelectorAll('.admin-ip-row'))p.remove();for(const id of ['#node-editor','#delete-dialog','#terminal-dialog','#command-editor','#terminal-paste-dialog'])closeDialog(id);$('#node-form').reset();if($('#terminal-target'))$('#terminal-target').textContent='';authUI();hooks.onLogout?.();}
  let refreshQueued=false;
  function withCurrentIP(record){
   const currentIP=record.resolvedIPs?.length?record.resolvedIPs.join('、'):record.agentPeerIP||record.detectedIP||record.ip;
@@ -261,7 +260,7 @@ export function initAdmin(hooks){
    event.preventDefault();save.disabled=true;error.textContent='';
    try{
     auth=await api('/api/admin/username','POST',{username:nameInput.value.trim(),current:passwordInput.value});csrf=auth.csrf;
-    await terminalUI.close(true);authUI();renderAdmin();toast('用户名已更新，其他登录已退出');
+    await terminalUI?.close(true);authUI();renderAdmin();toast('用户名已更新，其他登录已退出');
    }catch(e){error.textContent=e.message;}
    finally{passwordInput.value='';save.disabled=false;}
   });
@@ -295,24 +294,67 @@ export function initAdmin(hooks){
  if(password){const deployment=await api('/api/admin/deploy','POST',{id:result.node.public.id,password});watchDeployment(deployment.job.id);toast('部署已开始，可在服务器列表查看进度。');}else if(!manual)toast('服务器已保存');if(manual){await showEnrollment(result.node.public.id);}else{closeDialog('#node-editor');}await refresh();}catch(e){$('#node-error').textContent=e.message;}finally{password='';f.elements.password.value='';save.disabled=false;accessMethod.onchange();}});
  function confirmDelete(id,forget=false){forgetRemoval=forget;const record=records.find(r=>r.public.id===id);if(!record)return;removeId=id;$('#delete-description').textContent=forget?'仅撤销面板中的记录与凭据？远端 Agent 需要在被控机上手动清理。':record.public.online?'移除 '+record.public.name+' 并清除其 Agent 配置？其他应用不受影响。':'该节点已离线，仅移除面板记录并撤销凭据。服务器上的其他应用不会被修改。';$('#delete-dialog').showModal();}
  $('#delete-cancel').addEventListener('click',()=>closeDialog('#delete-dialog'));$('#delete-confirm').addEventListener('click',async()=>{const b=$('#delete-confirm');b.disabled=true;try{const removal=await api('/api/admin/nodes/'+encodeURIComponent(removeId),'DELETE',forgetRemoval?{forget:true}:undefined);closeDialog('#delete-dialog');await refresh();toast(removal.pending?'正在清除远端探针配置':'服务器记录已移除');}catch(e){toast(e.message,true);}finally{b.disabled=false;}});
- async function logout(){try{const result=await api('/api/logout','POST',{});terminalUI.close(true);loseAuth();auth=result;csrf=result.csrf||'';await refresh();toast('已退出管理员登录');}catch(e){toast(e.message,true);}}
- const terminalUI=createTerminalUI(api,()=>records,toast);
+ async function logout(){try{const result=await api('/api/logout','POST',{});terminalUI?.close(true);loseAuth();auth=result;csrf=result.csrf||'';await refresh();toast('已退出管理员登录');}catch(e){toast(e.message,true);}}
+ let terminalUI=null,terminalRequest=0,terminalRetry=0;
  const inspectorUI=createInspectorUI(api);
  const serverUI=createServerManagement({el,button,heading:sectionHeading,getRecords:()=>records,nodeTable,openEditor});
  const operations=createOperations({el,api,toast,field,button,heading:sectionHeading,getRecords:()=>records,getAuth:()=>auth,refresh});
- function openTerminal(id){const record=records.find(n=>n.public.id===id);if(auth.authenticated&&record)terminalUI.open(record);}
+ async function openTerminal(id){
+  if(!auth.authenticated)return;
+  const epoch=sessionEpoch,request=++terminalRequest;
+  try{
+   if(!terminalUI){
+    const url=new URL('./terminal.mjs',import.meta.url);
+    if(terminalRetry)url.searchParams.set('retry',String(terminalRetry));
+    const {createTerminalUI}=await import(url.href);
+    if(epoch!==sessionEpoch||request!==terminalRequest||!auth.authenticated)return;
+    terminalUI=createTerminalUI(api,()=>records,toast);
+   }
+   const record=records.find(n=>n.public.id===id);
+   if(record)terminalUI.open(record);
+  }catch{
+   if(epoch===sessionEpoch&&request===terminalRequest){terminalRetry++;toast('终端加载失败，请重新打开 SSH',true);}
+  }
+ }
  function decorateCard(card,node){if(!auth.authenticated)return;const record=records.find(n=>n.public.id===node.id);if(!record)return;const line=el('div','admin-ip-row');const ip=el('span');ip.append(icon('shield'),el('code','',record.currentIP));ip.title=record.ip;line.append(ip,button('SSH','ssh-button',()=>openTerminal(node.id),'terminal'));card.insertBefore(line,card.querySelector('.card-footer'));}
  const codeSelect=$('#node-form').elements.code;codeSelect.replaceChildren();const automatic=el('option','','自动识别');automatic.value='OTHER';codeSelect.append(automatic);for(const country of [...allCountries].sort((a,b)=>a.name.localeCompare(b.name,'zh-CN'))){const option=el('option','',country.name+' · '+country.code);option.value=country.code;codeSelect.append(option);}
  const renewalUI=createRenewalUI({el,api,isAdmin:()=>auth.authenticated,onChanged:()=>refresh(),toast});
  function decorateDetail(root,node){
-  if(!auth.authenticated)return;const record=records.find(r=>r.public.id===node.id);if(!record)return;
-  const section=el('section','admin-node-details');const heading=el('div','section-heading');heading.append(el('h3','','管理信息'),el('span','','仅管理员可见'));section.append(heading);const fields=el('div','detail-hardware');
-  for(const [label,value]of [['供应商',record.providerName||'未设置'],['供应商站点',record.providerURL||'未设置'],['到期时间',formatExpiry(record.expiresAt)],['续费周期',cycleLabel(record)],['每期金额',money(record.renewalAmount,record.renewalCurrency)],['续费提醒',record.notifyRenewal?'已开启 · 提前 3 天':'已关闭'],['Agent 版本',record.agentVersion||'待上报']]){
-   const item=el('dl'),content=el('dd');item.append(el('dt','',label),content);
-   if(label==='供应商站点'&&record.providerURL){let url;try{url=new URL(record.providerURL);}catch{}if(url&&['https:','http:'].includes(url.protocol)&&!url.username&&!url.password){const a=el('a','provider-link',value);a.href=url.href;a.target='_blank';a.rel='noopener noreferrer';content.append(a);}else content.textContent='未设置';}else content.textContent=value;
-   fields.append(item);
-  }
-  section.append(fields);if(record.notes){const note=el('p','private-note',record.notes);note.setAttribute('aria-label','私有备注');root.append(note);}const inspect=button('进程与服务','secondary-button detail-inspector-link',()=>inspectorUI.open(record));const inspectRow=el('dl','detail-inspector-actions'),inspectValue=el('dd');inspectRow.append(el('dt','','实时查询'),inspectValue);inspectValue.append(inspect);const hardware=root.querySelector('.detail-hardware');hardware?.classList.add('detail-hardware-admin');hardware?.append(inspectRow);root.append(section);
+  if(!auth.authenticated)return;
+  const section=el('section','admin-node-details'),heading=el('div','section-heading'),fields=el('div','detail-hardware');
+  heading.append(el('h3','','管理信息'),el('span','','仅管理员可见'));section.append(heading,fields);
+  const values=['供应商','供应商站点','到期时间','续费周期','每期金额','续费提醒','Agent 版本'].map(label=>{
+   const item=el('dl'),content=el('dd');item.append(el('dt','',label),content);fields.append(item);return content;
+  });
+  const note=el('p','private-note');note.setAttribute('aria-label','私有备注');
+  const inspect=button('进程与服务','secondary-button detail-inspector-link',()=>{
+   const current=records.find(r=>r.public.id===node.id);if(current)inspectorUI.open(current);
+  });
+  const row=el('dl','detail-inspector-actions'),action=el('dd'),hardware=root.querySelector('.detail-hardware');
+  row.append(el('dt','','实时查询'),action);action.append(inspect);hardware.append(row);root.append(note,section);
+  let previous=null;
+  return ()=>{
+   const r=records.find(record=>record.public.id===node.id);
+   if(!r){section.hidden=note.hidden=row.hidden=true;previous=null;hardware.classList.remove('detail-hardware-admin');return;}
+   const raw=[r.providerName,r.providerURL,r.expiresAt,r.renewalCycleLabel,r.renewalAmount,r.renewalCurrency,r.notifyRenewal,r.agentVersion,r.notes];
+   if(previous&&raw.every((v,i)=>v===previous[i]))return;
+   previous=raw;hardware.classList.add('detail-hardware-admin');section.hidden=row.hidden=false;
+   const next=[r.providerName||'未设置',r.providerURL,formatExpiry(r.expiresAt),cycleLabel(r),money(r.renewalAmount,r.renewalCurrency),r.notifyRenewal?'已开启 · 提前 3 天':'已关闭',r.agentVersion||'待上报'];
+   next.forEach((text,i)=>{
+    const field=values[i];
+    if(i===1){
+     let url;try{url=new URL(text);}catch{}
+     if(url&&['http:','https:'].includes(url.protocol)&&!url.username&&!url.password){
+      const link=field.firstElementChild||el('a','provider-link');link.target='_blank';link.rel='noopener noreferrer';
+      if(link.href!==url.href)link.href=url.href;if(link.textContent!==text)link.textContent=text;
+      if(!link.parentNode)field.replaceChildren(link);return;
+     }
+     text='未设置';
+    }
+    if(field.textContent!==text||field.firstElementChild)field.textContent=text;
+   });
+   if(note.textContent!==(r.notes||''))note.textContent=r.notes||'';note.hidden=!r.notes;
+  };
  }
  authUI();api('/api/session').then(v=>{auth=v;csrf=v.csrf;authUI();if(new URLSearchParams(location.search).get('login')==='1'){history.replaceState(null,'',location.pathname);openLogin();}return refresh();}).catch(e=>hooks.onLoadError(e.message));
  return {decorateCard,decorateDetail,cancelBoardRead,isAdmin:()=>auth.authenticated,refresh,api,toast,getRecords:()=>records,openTerminal};

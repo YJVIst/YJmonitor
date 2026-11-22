@@ -181,9 +181,27 @@ pub fn acceptable_ip(s: &str) -> bool {
         _ => false,
     }
 }
+fn json_size_limit(path: &Path) -> usize {
+    const MIB: usize = 1024 * 1024;
+    match path.file_name().and_then(|s| s.to_str()) {
+        Some("nodes.json") => 64 * MIB,
+        Some("restore-journal.json") => 128 * MIB,
+        Some(name) if name.ends_with(".backup") => 24 * MIB,
+        _ => 16 * MIB,
+    }
+}
+pub fn encode_state_json<T: Serialize>(path: &Path, value: &T) -> std::io::Result<Vec<u8>> {
+    let raw = serde_json::to_vec(value)?;
+    if raw.len() > json_size_limit(path) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::FileTooLarge,
+            "state too large",
+        ));
+    }
+    Ok(raw)
+}
 pub fn atomic_json<T: Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
-    let raw = serde_json::to_vec_pretty(value)?;
-    atomic_bytes(path, &raw)
+    atomic_bytes(path, &encode_state_json(path, value)?)
 }
 pub fn atomic_bytes(path: &Path, raw: &[u8]) -> std::io::Result<()> {
     let tmp = path.with_file_name(format!(
@@ -208,10 +226,11 @@ pub fn atomic_bytes(path: &Path, raw: &[u8]) -> std::io::Result<()> {
 }
 pub fn read_json<T: DeserializeOwned>(path: &Path) -> std::io::Result<T> {
     let mut b = Vec::new();
+    let limit = json_size_limit(path);
     File::open(path)?
-        .take(16 * 1024 * 1024 + 1)
+        .take((limit + 1) as u64)
         .read_to_end(&mut b)?;
-    if b.len() > 16 * 1024 * 1024 {
+    if b.len() > limit {
         return Err(std::io::Error::other("state too large"));
     }
     serde_json::from_slice(&b).map_err(std::io::Error::other)
@@ -594,7 +613,13 @@ impl App {
         }
     }
     pub fn save_data(&self, i: &mut Inner, data: Data) -> ApiResult<()> {
-        atomic_json(&self.0.dir.join("nodes.json"), &data).map_err(|_| ApiError::internal())?;
+        atomic_json(&self.0.dir.join("nodes.json"), &data).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::FileTooLarge {
+                ApiError::new(413, "节点状态超过 64 MiB，未保存更改")
+            } else {
+                ApiError::internal()
+            }
+        })?;
         i.data = data;
         i.cache = None;
         i.admin_cache = None;

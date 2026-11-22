@@ -42,6 +42,16 @@ location = /api/enroll/claim {
     proxy_send_timeout 30s;
     proxy_buffering off;
 }
+location ^~ /assets/ {
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types application/javascript text/javascript text/css image/svg+xml;
+    proxy_pass http://127.0.0.1:19282;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Probe-Gateway "";
+}
 location / {
     proxy_pass http://127.0.0.1:19282;
     proxy_http_version 1.1;

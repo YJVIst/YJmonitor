@@ -49,13 +49,45 @@ export function createNetworkUI({el}){
   }
   s.nic=nic;s.online=node.online;
  }
- function detail(node){
-  const section=el('section','detail-network');const heading=el('div','section-heading');heading.append(el('h3','','网卡流量'),el('span','',node.online?'实时采样':'最后一次上报'));section.append(heading);
-  const interfaces=node.networkAvailable&&Array.isArray(node.network)?node.network:[];
-  if(!interfaces.length){section.append(el('p','network-empty','暂无网卡数据'));return section;}
-  const list=el('div','network-interface-list');
-  for(const nic of interfaces){const row=el('article','network-interface');const top=el('div','network-interface-heading');top.append(el('strong','',nic.name));const tags=el('span','network-interface-tags');if(nic.default)tags.append(el('span','','默认路由'));if(nic.virtual)tags.append(el('span','','虚拟网卡'));tags.append(el('span','',node.online?(stateName[nic.state]||nic.state):'离线'));top.append(tags);row.append(top,values(nic,node.online,false));list.append(row);}
-  section.append(list,el('p','form-footnote','累计值为网卡收发计数，系统重启或网卡重建后可能重置。各网卡分别展示，避免桥接、隧道流量重复相加。'));return section;
+ function detail(){
+  const section=el('section','detail-network'),heading=el('div','section-heading'),status=el('span');
+  heading.append(el('h3','','网卡流量'),status);
+  const list=el('div','network-interface-list'),empty=el('p','network-empty','暂无网卡数据');
+  const foot=el('p','form-footnote','累计值为网卡收发计数，系统重启或网卡重建后可能重置。各网卡分别展示，避免桥接、隧道流量重复相加。');
+  section.append(heading,empty,list,foot);
+  const rows=new Map();
+  function update(node){
+   const interfaces=node.networkAvailable&&Array.isArray(node.network)?node.network:[];
+   const names=new Set(interfaces.map(n=>n.name));
+   for(const [name,row] of rows)if(!names.has(name)){row.item.remove();rows.delete(name);}
+   const put=(field,value)=>{if(field.textContent!==value)field.textContent=value;};
+   put(status,node.online?'实时采样':'最后一次上报');
+   if(empty.hidden!==!!interfaces.length){empty.hidden=!!interfaces.length;list.hidden=foot.hidden=!interfaces.length;}
+   if(!interfaces.length){if(!list.hidden)list.hidden=foot.hidden=true;return;}
+   let cursor=list.firstElementChild;
+   for(const nic of interfaces){
+    let row=rows.get(nic.name);
+    if(!row){
+     const item=el('article','network-interface'),top=el('div','network-interface-heading'),tags=el('span','network-interface-tags');
+     const route=el('span','','默认路由'),virtual=el('span','','虚拟网卡'),state=el('span');
+     tags.append(route,virtual,state);top.append(el('strong','',nic.name),tags);
+     const metrics=values(null,false,false);item.append(top,metrics);
+     row={item,route,virtual,state,fields:[...metrics.querySelectorAll('dd')]};rows.set(nic.name,row);
+    }
+    if(row.item!==cursor)list.insertBefore(row.item,cursor);
+    cursor=row.item.nextElementSibling;
+    if(row.route.hidden===!!nic.default)row.route.hidden=!nic.default;
+    if(row.virtual.hidden===!!nic.virtual)row.virtual.hidden=!nic.virtual;
+    put(row.state,node.online?(stateName[nic.state]||nic.state||'可用'):'离线');
+    for(const [i,key] of ['rx_rate','rx_bytes','tx_rate','tx_bytes'].entries()){
+     const rate=i%2===0;
+     if(row.previous&&row.previous[key]===nic[key]&&(!rate||row.online===node.online))continue;
+     put(row.fields[i],rate?(node.online&&Number.isFinite(nic[key])?formatBytes(nic[key])+'/s':'—'):formatBytes(nic[key]));
+    }
+    row.previous=nic;row.online=node.online;
+   }
+  }
+  return {section,update};
  }
  return {card,updateCard,detail};
 }

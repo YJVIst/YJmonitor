@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Root-owned, fixed-repository signed updater. Browser input cannot select paths or commands."""
 import http.client,socket
+from contextlib import contextmanager
 import argparse,base64,fcntl,hashlib,json,os,pathlib,pwd,re,shutil,ssl,stat,subprocess,tempfile,time,urllib.request,urllib.parse,urllib.error,zipfile
 REPOSITORY="YJVIst/YJmonitor"
 PUBLIC="o8+DdHbo82V7fxJEIiEhe5AK/frR91Fz5vjf/pDAnts="
@@ -157,16 +158,108 @@ def safe_snapshot(source,dest,uid,allow_owner=None):
                 if stat.S_ISDIR(actual.st_mode):copy_dir(child,target/entry.name)
                 else:
                     if actual.st_nlink!=1 or actual.st_size>256*1024*1024:raise ValueError("unsafe state file")
-                    with os.fdopen(os.dup(child),"rb") as src,(target/entry.name).open("xb") as out:shutil.copyfileobj(src,out,65536)
+                    with os.fdopen(os.dup(child),"rb") as src,(target/entry.name).open("xb") as out:
+                        shutil.copyfileobj(src,out,65536)
+                        if out.tell()!=actual.st_size or os.fstat(child).st_mtime_ns!=actual.st_mtime_ns:
+                            raise ValueError("state changed while copying")
+                        out.flush()
+                        os.fsync(out.fileno())
                     (target/entry.name).chmod(0o600)
             finally:os.close(child)
     try:copy_dir(fd,dest)
     finally:os.close(fd)
-def replace_contents(target,source):
-    for entry in target.iterdir():
-        if entry.is_dir() and not entry.is_symlink():shutil.rmtree(entry)
-        else:entry.unlink()
-    for entry in source.iterdir():os.rename(entry,target/entry.name)
+class RecoveryError(RuntimeError):
+    pass
+
+@contextmanager
+def update_workspace(parent):
+    path=pathlib.Path(tempfile.mkdtemp(prefix=".yuji-update-",dir=parent))
+    retain=False
+    try:
+        yield path
+    except RecoveryError as exc:
+        retain=True
+        raise RecoveryError(f"recovery files retained in {path}: {exc}") from exc
+    finally:
+        if not retain:
+            shutil.rmtree(path)
+
+def save_previous(work,program,snapshot,version):
+    # Prepare the full recovery generation before touching the existing one.
+    with update_workspace(work) as stage:
+        program_name="previous-program";state_name="previous-state"
+        shutil.copytree(program,stage/program_name,ignore=shutil.ignore_patterns("storage"))
+        shutil.copytree(snapshot,stage/state_name)
+        atomic(stage/"previous.json",{"version":version})
+        names=[program_name,state_name,"previous.json"]
+        previous=stage/"retired";previous.mkdir(mode=0o700)
+        moved=[];installed=[]
+        try:
+            for name in names:
+                if (work/name).exists():
+                    os.rename(work/name,previous/name)
+                    moved.append(name)
+            for name in names:
+                os.rename(stage/name,work/name)
+                installed.append(name)
+        except Exception:
+            try:
+                for name in reversed(installed):os.rename(work/name,stage/name)
+                for name in reversed(moved):os.rename(previous/name,work/name)
+            except Exception as exc:
+                raise RecoveryError("previous generation recovery interrupted") from exc
+            raise
+
+def replace_contents(target,source,uid,gid):
+    # The instance directory can itself be a mount point. Pin both directories
+    # while preparing the new tree and moving entries on the target filesystem.
+    flags=os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW
+    root=os.open(target,flags)
+    try:
+        parent=pathlib.Path(f"/proc/self/fd/{root}")
+        temp=pathlib.Path(tempfile.mkdtemp(prefix=".yuji-state-",dir=parent))
+        work=os.open(temp,flags)
+        retain=False
+        try:
+            info=os.fstat(work)
+            if info.st_uid!=os.geteuid() or info.st_mode&0o077:
+                raise ValueError("untrusted staging directory")
+            stage=pathlib.Path(f"/proc/self/fd/{work}")
+            incoming=stage/"incoming"
+            previous=stage/"previous"
+            previous.mkdir(mode=0o700)
+            safe_snapshot(source,incoming,uid)
+            ownership(incoming,uid,gid)
+            old_names=[n for n in os.listdir(root) if n!=temp.name]
+            new_names=os.listdir(incoming)
+            if temp.name in new_names:raise ValueError("state staging name conflict")
+            moved_old=[];moved_new=[]
+            try:
+                for name in old_names:
+                    os.rename(parent/name,previous/name)
+                    moved_old.append(name)
+                for name in new_names:
+                    os.rename(incoming/name,parent/name)
+                    moved_new.append(name)
+                os.fsync(root)
+            except Exception:
+                try:
+                    for name in reversed(moved_new):os.rename(parent/name,incoming/name)
+                    for name in reversed(moved_old):os.rename(previous/name,parent/name)
+                    os.fsync(root)
+                except Exception as exc:
+                    raise RecoveryError(f"state recovery files retained at {target/temp.name}") from exc
+                raise
+        except RecoveryError:
+            retain=True
+            raise
+        finally:
+            os.close(work)
+            if not retain:
+                try:shutil.rmtree(temp)
+                except OSError as exc:
+                    raise RecoveryError(f"state staging cleanup interrupted at {target/temp.name}") from exc
+    finally:os.close(root)
 def check(cfg,version):
     # PHP-FPM may not have created its socket when systemctl start returns.
     # Retry the wake request as well as the direct controller health probe.
@@ -225,7 +318,7 @@ def apply(cfg,request,cache=None):
     action=request["action"];version=request.get("version","")
     if action not in ("update","rollback") or (action=="update" and not VERSION.fullmatch(version)):raise ValueError("invalid update request")
     if time.time()-request.get("at",0)>900 or request.get("at",0)>time.time()+60:raise ValueError("update request expired")
-    with tempfile.TemporaryDirectory(prefix=".yuji-update-",dir=root.parent) as folder:
+    with update_workspace(root.parent) as folder:
         tmp=pathlib.Path(folder);tmp.chmod(0o700)
         if action=="update":
             manifest=download(version,"panel-stable.json",16384,cache,distribution);f=verify(manifest,version,tmp,distribution)
@@ -251,14 +344,13 @@ def apply(cfg,request,cache=None):
         live_storage=root/"storage";data_parent=state.parent
         internal=data_parent==live_storage
         if root in data_parent.parents and not internal:raise ValueError("unsupported private state layout")
-        stopped=False;swapped=False;root_moved=False;data_moved=False;snapshot_complete=False;old=tmp/"old"
+        stopped=False;swapped=False;root_moved=False;data_moved=False;state_changed=False;old=tmp/"old"
         try:
             service(cfg,"stop");stopped=True
-            safe_snapshot(data_parent,tmp/"state-snapshot",cfg["uid"]);snapshot_complete=True
+            safe_snapshot(data_parent,tmp/"state-snapshot",cfg["uid"])
             if restore_state:
-                replacement=tmp/"restore-state";safe_snapshot(restore_state,replacement,0,allow_owner=cfg["uid"])
-                ownership(replacement,cfg["uid"],cfg["gid"])
-                replace_contents(data_parent,replacement)
+                replace_contents(data_parent,restore_state,cfg["uid"],cfg["gid"])
+                state_changed=True
             ownership(data_parent,cfg["uid"],cfg["gid"])
             if (target/"storage").exists():shutil.rmtree(target/"storage")
             if not internal:(target/"storage").symlink_to(data_parent,target_is_directory=True)
@@ -266,29 +358,29 @@ def apply(cfg,request,cache=None):
             if internal:os.rename(old/"storage",target/"storage");data_moved=True
             os.rename(target,root);swapped=True
             relabel(cfg)
+            state_changed=True
             service(cfg,"start");stopped=False
             check(cfg,version)
-            if prior.exists():shutil.rmtree(prior)
-            if priorstate.exists():shutil.rmtree(priorstate)
-            shutil.copytree(old,prior,ignore=shutil.ignore_patterns("storage"))
-            shutil.copytree(tmp/"state-snapshot",priorstate)
-            atomic(meta,{"version":oldversion})
+            save_previous(work,old,tmp/"state-snapshot",oldversion)
+        except RecoveryError:
+            raise
         except Exception:
-            if swapped:
-                try:service(cfg,"stop")
-                except Exception:pass
-                failed=tmp/"failed";os.rename(root,failed)
-                if internal:os.rename(failed/"storage",old/"storage")
-                os.rename(old,root)
-            elif root_moved:
-                if data_moved:os.rename(target/"storage",old/"storage")
-                os.rename(old,root)
-            if snapshot_complete:
-                replace_contents(data_parent,tmp/"state-snapshot")
-                ownership(data_parent,cfg["uid"],cfg["gid"])
-            if stopped or swapped:
-                try:relabel(cfg);service(cfg,"start")
-                except Exception:pass
+            try:
+                if swapped:
+                    service(cfg,"stop")
+                    failed=tmp/"failed";os.rename(root,failed)
+                    if internal:os.rename(failed/"storage",old/"storage")
+                    os.rename(old,root)
+                elif root_moved:
+                    if data_moved:os.rename(target/"storage",old/"storage")
+                    os.rename(old,root)
+                if state_changed:
+                    replace_contents(data_parent,tmp/"state-snapshot",cfg["uid"],cfg["gid"])
+                    ownership(data_parent,cfg["uid"],cfg["gid"])
+                if stopped or swapped:
+                    relabel(cfg);service(cfg,"start")
+            except Exception as exc:
+                raise RecoveryError("automatic recovery interrupted") from exc
             raise
     return version
 def run(args):
@@ -315,7 +407,7 @@ def run(args):
         try:
             version=apply(cfg,request,args.release_dir);report("操作完成，当前版本 "+str(version),"done")
         except Exception as e:
-            report("操作未完成，已保留或恢复原版本："+str(e)[:200],"failed")
+            report("操作未完成："+str(e)[:200],"failed")
             raise
 def main():
     if os.geteuid()!=0:raise SystemExit("Run this updater as root")

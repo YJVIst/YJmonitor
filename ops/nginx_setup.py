@@ -572,6 +572,16 @@ def render(domain, port, tls, has_ipv6):
 """
     text += ''.join('    set_real_ip_from ' + item + ';\n' for item in CF_RANGES)
     text += challenge + """    location = /_internal/health { return 404; }
+    location ^~ /assets/ {
+        gzip on;
+        gzip_vary on;
+        gzip_min_length 1024;
+        gzip_types application/javascript text/javascript text/css image/svg+xml;
+        proxy_pass http://127.0.0.1:""" + str(port) + """;
+        proxy_set_header Host """ + domain + """;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Probe-Gateway "";
+    }
     location / {
         proxy_pass http://127.0.0.1:""" + str(port) + """;
         proxy_http_version 1.1;
