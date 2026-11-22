@@ -122,47 +122,78 @@ function updateMetrics(view){
  const at=performance.now(),motion=!!view.sampleAt&&at-view.sampleAt<2500&&n.online&&state.running&&!reducedMotion.matches;
  const period=n.demo?1000:3000;
  view.sampleAt=at;
- setText(view.number,n.online&&finite(n.cpu)?n.cpu.toFixed(1):'—');
- view.value.classList.toggle('warning',n.cpu>=85);
- if(n.online)plotHistory(view,n.history,motion,at,period);
- const disk=diskTotal(n);
- for(const [j,values] of [n.memory,disk].entries()){
-  const r=view.resources[j],used=n.online?values?.used:null,total=values?.total,ratio=percent(used,total),value=display(used);
-  if(r.value.data!==value)r.value.data=value;
-  setText(r.total,total>0?'/ '+display(total)+' GiB':'');
-  setText(r.ratio,ratio!==null?ratio.toFixed(1)+'%':n.online?'未启用':'暂无数据');
-  r.bar.style.transitionDuration=(motion?period:0)+'ms';r.bar.style.transform='scaleX('+((ratio||0)/100)+')';
-  r.track.classList.toggle('warning',ratio>=85);
-  if(ratio===null)r.track.removeAttribute('aria-valuenow');else r.track.setAttribute('aria-valuenow',ratio.toFixed(1));
+ const painted=view.lastPainted;
+ if(!painted||n.cpu!==painted.cpu){
+  setText(view.number,n.online&&finite(n.cpu)?n.cpu.toFixed(1):'—');
+  view.value.classList.toggle('warning',n.cpu>=85);
  }
- if(view.swap){setText(view.swap,n.online?display(n.swap.used)+' / '+display(n.swap.total)+' GiB':'暂无数据');view.swap.classList.toggle('swap-warning',n.online&&percent(n.swap.used,n.swap.total)>=85);}
+ if(n.online)plotHistory(view,n.history,motion,at,period);
+ if(!painted||painted.memory?.used!==n.memory?.used||painted.memory?.total!==n.memory?.total)
+  patchResource(view.resources[0],n.memory,n.online,motion?period:0);
+ const oldDisks=painted?.disks;
+ if(!oldDisks||oldDisks.length!==n.disks.length||n.disks.some((disk,i)=>disk.used!==oldDisks[i].used||disk.total!==oldDisks[i].total))
+  patchResource(view.resources[1],diskTotal(n),n.online,motion?period:0);
+ if(view.swap&&(!painted||painted.swap?.used!==n.swap.used||painted.swap?.total!==n.swap.total)){
+  setText(view.swap,n.online?display(n.swap.used)+' / '+display(n.swap.total)+' GiB':'暂无数据');
+  view.swap.classList.toggle('swap-warning',n.online&&percent(n.swap.used,n.swap.total)>=85);
+ }
  networkUI.updateCard(view.net,n);
+ view.lastPainted=n;
 }
+function patchResource(r,values,online,duration){
+ const used=online?values?.used:null,total=values?.total,ratio=percent(used,total),value=display(used);
+ if(r.value.data!==value)r.value.data=value;
+ setText(r.total,total>0?'/ '+display(total)+' GiB':'');
+ setText(r.ratio,ratio!==null?ratio.toFixed(1)+'%':online?'未启用':'暂无数据');
+ r.bar.style.transitionDuration=duration+'ms';r.bar.style.transform='scaleX('+((ratio||0)/100)+')';
+ r.track.classList.toggle('warning',ratio>=85);
+ if(ratio===null)r.track.removeAttribute('aria-valuenow');else r.track.setAttribute('aria-valuenow',ratio.toFixed(1));
+}
+function sameCard(a,b){
+ return a.id===b.id&&a.name===b.name&&a.group===b.group&&a.pinned===b.pinned&&a.country===b.country&&a.city===b.city&&
+  a.code===b.code&&a.online===b.online&&a.pending===b.pending&&a.cpuModel===b.cpuModel&&a.cores===b.cores&&hasSwap(a)===hasSwap(b);
+}
+function stableListEntry(old,n){
+ if(!old||!sameCard(old,n)||old.order!==n.order||old.arch!==n.arch)return false;
+ if(!n.online)return true;
+ if(state.sort==='cpu')return old.cpu===n.cpu;
+ if(state.sort==='memory')return percent(old.memory.used,old.memory.total)===percent(n.memory.used,n.memory.total);
+ return true;
+}
+function patchCard(view,n,record){
+ if(record&&view.ip){
+  setText(view.ip,record.currentIP);
+  if(view.ip.parentElement.title!==record.ip)view.ip.parentElement.title=record.ip;
+ }
+ if(view.node===n)return;
+ const old=view.node;view.node=n;
+ if(old.latencyMs!==n.latencyMs)patchLatencyBadge(view.latency,n);
+ if(old.uptime!==n.uptime||old.lastSeenMinutes!==n.lastSeenMinutes){
+  const text=n.online?'运行 '+n.uptime:n.pending?'等待首次上报':'最后上报 '+n.lastSeenMinutes+' 分钟前';
+  if(view.uptime.data!==text)view.uptime.data=text;
+ }
+ if(visibleCards.has(view))updateMetrics(view);
+}
+function adminRecords(){return admin?.isAdmin()?new Map(admin.getRecords().map(r=>[r.public.id,r])):null;}
+let boardAdmin=false;
 function syncCards(list){
  const grid=$('#server-grid'),wanted=new Set(list.map(n=>n.id));
  for(const [id,v] of cardViews)if(!wanted.has(id)){nearViewport.unobserve(v.card);visibleCards.delete(v);v.motion?.cancel();v.card.remove();cardViews.delete(id);}
  grid.classList.toggle('many-nodes',list.length>8);
  const isAdmin=admin?.isAdmin();
- const records=isAdmin?new Map(admin.getRecords().map(r=>[r.public.id,r])):null;
+ const records=adminRecords();boardAdmin=!!isAdmin;
  let cursor=grid.firstElementChild;
  for(const n of list){
   const record=records?.get(n.id);
-  const signature=JSON.stringify([n.name,n.country,n.city,n.code,n.group,n.pinned,n.online,n.pending,n.cpuModel,n.cores,hasSwap(n),isAdmin]);
   let v=cardViews.get(n.id);
-  if(!v||v.signature!==signature){
+  if(!v||v.admin!==isAdmin||!sameCard(v.node,n)){
    const card=makeCard(n);
    if(v){if(cursor===v.card)cursor=card;nearViewport.unobserve(v.card);visibleCards.delete(v);v.motion?.cancel();v.card.replaceWith(card);}
-   v={node:n,card,signature};cardViews.set(n.id,v);nearViewport.observe(card);
+   v={node:n,card,admin:isAdmin,latency:card.querySelector('.latency-badge'),uptime:card.querySelector('.uptime').lastChild,ip:card.querySelector('.admin-ip-row code')};cardViews.set(n.id,v);nearViewport.observe(card);
   }
   if(v.card!==cursor)grid.insertBefore(v.card,cursor);
   cursor=v.card.nextElementSibling;
-  if(record){const ip=v.card.querySelector('.admin-ip-row code');if(ip)setText(ip,record.currentIP);}
-  if(v.node!==n){
-   v.node=n;patchLatencyBadge(v.card.querySelector('.latency-badge'),n);
-   const uptime=v.card.querySelector('.uptime').lastChild,txt=n.online?'运行 '+n.uptime:(n.pending?'等待首次上报':'最后上报 '+n.lastSeenMinutes+' 分钟前');
-   if(uptime.data!==txt)uptime.data=txt;
-   if(visibleCards.has(v))updateMetrics(v);
-  }
+  patchCard(v,n,record);
  }
 }
 function filtered(){const q=state.query.normalize('NFKC').toLocaleLowerCase();const list=nodes.filter(n=>(state.status==='all'||(state.status==='online')===n.online)&&(state.country==='all'||n.country===state.country)&&(state.group==='all'||'g:'+n.group===state.group)&&(!q||[n.name,n.group,n.country,n.city,n.cpuModel,n.arch].join(' ').normalize('NFKC').toLocaleLowerCase().includes(q)));if(state.sort==='cpu')list.sort((a,b)=>(b.online?b.cpu:-1)-(a.online?a.cpu:-1));if(state.sort==='memory')list.sort((a,b)=>(b.online?percent(b.memory.used,b.memory.total):-1)-(a.online?percent(a.memory.used,a.memory.total):-1));if(state.sort==='name')list.sort((a,b)=>a.name.localeCompare(b.name));if(state.sort==='default')list.sort((a,b)=>Number(!!b.pinned)-Number(!!a.pinned)||(a.order||0)-(b.order||0));return list;}
@@ -216,33 +247,43 @@ function updateFilterOptions(select,values,label,prefix){
 function applyData(list,site,preview,themeRevision){
  refreshAppearance(themeRevision);
  demoMode=preview;applySite(site);state.stale=false;state.updated=new Date();
- const oldById=new Map(nodes.map(n=>[n.id,n]));
+ const oldById=list.some(n=>n.demo)?new Map(nodes.map(n=>[n.id,n])):null;
+ let layoutUnchanged=nodes.length>0&&nodes.length===list.length&&boardAdmin===admin?.isAdmin();
  state.step++;
  nodes.splice(0,nodes.length,...list.map((n,index)=>{
   const c=countryByCode.get(normalizedCountry(n.code));if(c)n.country=c.name;
-  const old=oldById.get(n.id);
+  const old=oldById?.get(n.id);
   if(n.demo&&n.online&&old?.demo&&finite(n.cpu)){
    n.cpu=Math.round(Math.max(0,Math.min(100,n.cpu+Math.sin(state.step*.7+index)*2.1))*10)/10;
    n.history=[...old.history.slice(-39),n.cpu];
   }
+  if(layoutUnchanged&&!stableListEntry(nodes[index],n))layoutUnchanged=false;
   return n;
  }));
- const online=nodes.filter(n=>n.online).length,offline=nodes.length-online;
- $('#node-total').textContent=nodes.length;$('#online-total').textContent=online;$('#offline-total').textContent=offline;
- for(const [key,count]of [['all',nodes.length],['online',online],['offline',offline]])document.querySelector('[data-status="'+key+'"] span').textContent=count;
- const countries=[...new Set(nodes.map(n=>n.country))],groups=[...new Set(nodes.map(n=>n.group||''))].sort();
- updateFilterOptions($('#country-filter'),countries,'全部地区','');
- updateFilterOptions($('#group-filter'),groups,'全部分组','g:');
- if(!countries.includes(state.country))state.country='all';
- if(!groups.some(g=>'g:'+g===state.group))state.group='all';
- $('#country-filter').value=state.country;$('#group-filter').value=state.group;
+ if(!layoutUnchanged){
+  const online=nodes.filter(n=>n.online).length,offline=nodes.length-online;
+  $('#node-total').textContent=nodes.length;$('#online-total').textContent=online;$('#offline-total').textContent=offline;
+  for(const [key,count]of [['all',nodes.length],['online',online],['offline',offline]])document.querySelector('[data-status="'+key+'"] span').textContent=count;
+  const countries=[...new Set(nodes.map(n=>n.country))],groups=[...new Set(nodes.map(n=>n.group||''))].sort();
+  updateFilterOptions($('#country-filter'),countries,'全部地区','');
+  updateFilterOptions($('#group-filter'),groups,'全部分组','g:');
+  if(!countries.includes(state.country))state.country='all';
+  if(!groups.some(g=>'g:'+g===state.group))state.group='all';
+  $('#country-filter').value=state.country;$('#group-filter').value=state.group;
+ }
  const mixed=preview&&list.some(n=>!n.demo);
  const label=mixed?'实时与演示节点':preview?'界面预览':'实时监控';
  if($('.demo-label').textContent!==label){
   $('.demo-label').replaceChildren(el('span'),document.createTextNode(label));
   $('.footer>span').replaceChildren(el('span','footer-dot'),document.createTextNode(mixed?'真实节点由 Agent 上报，演示节点使用模拟数据':preview?'演示数据 · 尚未接入 Agent':'监测数据由 Agent 实时上报'));
  }
- if(!$('#main-content').hidden)render();updateRefresh();
+ if(!$('#main-content').hidden){
+  if(layoutUnchanged){
+   const records=adminRecords();
+   for(const n of nodes){const view=cardViews.get(n.id);if(view)patchCard(view,n,records?.get(n.id));}
+  }else render();
+ }
+ updateRefresh();
  if(state.dialogId){
   const current=nodes.find(node=>node.id===state.dialogId);
   if(current)showDetail(current);else $('#node-dialog').close();
