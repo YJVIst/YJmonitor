@@ -1,8 +1,20 @@
 import {createPager} from './pagination.mjs';
 const emptyFilters=()=>({status:'all',query:'',group:null,provider:null,expiry:'all'});
+export function reportedAddressRows(record){
+ const ips=record.detectedIPs;
+ if(ips)return [['出口 IPv4',ips.ipv4],['出口 IPv6',ips.ipv6]].filter(([,ip])=>ip);
+ return record.detectedIP?[['上报 IP',record.detectedIP]]:[];
+}
+export function currentAddress(record){
+ if(record.detectedIPs){
+  const rows=reportedAddressRows(record);
+  if(rows.length)return rows.map(([label,ip])=>label.slice(3)+' '+ip).join('\n');
+ }
+ return record.resolvedIPs?.length?record.resolvedIPs.join('、'):record.agentPeerIP||record.detectedIP||record.ip;
+}
 export function matchesServer(record,filters,at=Date.now()){
  const n=record.public,q=filters.query.trim().toLocaleLowerCase();
- if(q&&![n.name,record.ip,...(record.resolvedIPs||[]),record.detectedIP,record.agentPeerIP,n.group,record.providerName].some(s=>String(s||'').toLocaleLowerCase().includes(q)))return false;
+ if(q&&![n.name,record.ip,...(record.resolvedIPs||[]),record.detectedIPs?.ipv4,record.detectedIPs?.ipv6,record.detectedIP,record.agentPeerIP,n.group,record.providerName].some(s=>String(s||'').toLocaleLowerCase().includes(q)))return false;
  if(filters.group!==null&&(n.group||'')!==filters.group)return false;
  if(filters.provider!==null&&(record.providerName||'')!==filters.provider)return false;
  const expires=Date.parse(record.expiresAt),set=Number.isFinite(expires);
@@ -93,7 +105,7 @@ export function createServerManagement({el,button,heading,getRecords,nodeTable,o
   inner.append(title);const fields=el('dl','server-diagnostic-fields');
   for(const [label,value]of [
    ['当前状态',r.public.pending?'待接入':r.public.online?'在线':'离线'],['SSH 地址',(r.ip.includes(':')?'['+r.ip+']':r.ip)+':'+r.port],
-   ...(r.resolvedIPs?[['解析 IP',r.resolvedIPs.join('、')||'等待域名解析']]:[]),['Agent 接入 IP',r.agentPeerIP||'待连接'],['Agent 上报 IP',r.detectedIP||'待上报'],
+   ...(r.resolvedIPs?[['解析 IP',r.resolvedIPs.join('、')||'等待域名解析']]:[]),['Agent 接入 IP',r.agentPeerIP||'待连接'],...(reportedAddressRows(r).length?reportedAddressRows(r):[['出口 IP','待上报']]),
    ['最后有效上报',date(h.lastReportAt)],['离线开始',h.offlineSince?date(h.offlineSince)+(h.offlineEstimated?'（依据上报超时估算）':''):'—'],
    ['最近通讯错误',h.lastError||'暂无记录'],['错误记录时间',h.lastErrorAt?date(h.lastErrorAt):'—'],
    ['Agent 版本',r.agentVersion||'待上报'],['最近部署',r.deployMessage||'暂无记录'],

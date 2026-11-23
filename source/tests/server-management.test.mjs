@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {matchesServer,duration} from '../src/server-management.mjs';
+import {matchesServer,duration,currentAddress,reportedAddressRows} from '../src/server-management.mjs';
 const at=Date.parse('2026-10-08T00:00:00Z'),defaults={status:'all',query:'',group:null,provider:null,expiry:'all'};
 const server={public:{name:'London 节点',online:true,group:'生产'},providerName:'Example Cloud',ip:'2001:db8::9',expiresAt:new Date(at+86400000).toISOString()};
 test('admin filters combine status search group provider and expiry',()=>{
@@ -38,4 +38,14 @@ test('1000 node pages stay bounded through filtering and deletion',()=>{
  assert.deepEqual(pageWindow(1,20,50),{page:1,pages:1,start:0,end:1});
  assert.deepEqual(pageWindow(0,20,50),{page:1,pages:1,start:0,end:0});
  assert.equal(pageWindow(1000,99,60).end,1000);
+});
+
+test('reported egress addresses survive peer and DNS precedence and can be searched',()=>{
+ const r={...server,detectedIPs:{ipv4:'192.0.2.8',ipv6:'2001:db8::8'},agentPeerIP:'192.0.2.7',resolvedIPs:['192.0.2.9']};
+ assert.equal(currentAddress(r),'IPv4 192.0.2.8\nIPv6 2001:db8::8');
+ for(const query of Object.values(r.detectedIPs))assert(matchesServer(r,{...defaults,query}));
+ assert.deepEqual(reportedAddressRows({...r,detectedIPs:{ipv6:'2001:db8::8'}}),[['出口 IPv6','2001:db8::8']]);
+ assert.equal(currentAddress({...r,detectedIPs:{ipv4:'192.0.2.8'}}),'IPv4 192.0.2.8');
+ assert.equal(currentAddress({...r,detectedIPs:undefined}),'192.0.2.9');
+ assert.deepEqual(reportedAddressRows({detectedIP:'192.0.2.1'}),[['上报 IP','192.0.2.1']]);
 });

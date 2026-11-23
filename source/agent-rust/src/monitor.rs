@@ -358,7 +358,7 @@ impl Collector {
         out.truncate(64);
         (out, true)
     }
-    pub fn sample(&mut self, country: &str, public_ip: &str) -> Result<Metrics> {
+    pub fn sample(&mut self, country: &crate::country::Country) -> Result<Metrics> {
         let now = parse_cpu(&read_text("/proc/stat", 4 * 1024 * 1024)?)?;
         let mut usage = 0.0;
         if now.total > self.previous.total && now.idle >= self.previous.idle {
@@ -397,8 +397,9 @@ impl Collector {
             swap_used,
             volumes: volumes(),
             uptime,
-            country: country.into(),
-            public_ip: public_ip.into(),
+            country: country.code.clone(),
+            public_ip: country.addresses.unwrap_or_default().primary(),
+            public_ips: country.addresses,
             version: VERSION.into(),
         })
     }
@@ -472,7 +473,7 @@ mod tests {
     #[test]
     fn real_metrics_valid_and_network_first_sample_unknown() {
         let mut c = Collector::new();
-        let m = c.sample("", "").unwrap();
+        let m = c.sample(&Default::default()).unwrap();
         assert!(m.memory_total > 0 && m.memory_used <= m.memory_total);
         assert!(m.cores > 0);
         assert!(m.network.len() <= 64);

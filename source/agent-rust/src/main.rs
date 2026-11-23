@@ -49,7 +49,7 @@ fn run_main() -> Result<()> {
         let stop=CancellationToken::new();let shutdown=stop.clone();
         let mut term=tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).map_err(|_|"signal handler unavailable")?;
         tokio::spawn(async move{tokio::select!{_=tokio::signal::ctrl_c()=>{},_=term.recv()=>{}}shutdown.cancel();});
-        let(country_tx,country_rx)=watch::channel((String::new(),String::new()));
+        let(country_tx,country_rx)=watch::channel(country::Country::default());
         let country_task=tokio::spawn(country::run(tls.clone(),country_tx,stop.clone()));
         let(metrics_tx,metrics_rx)=watch::channel::<Option<Metrics>>(None);
         let sample_stop=stop.clone();
@@ -59,7 +59,7 @@ fn run_main() -> Result<()> {
             loop{
                 tokio::select!{_=sample_stop.cancelled()=>return,_=ticker.tick()=>{}}
                 let country=country_rx.borrow().clone();
-                let job=tokio::task::spawn_blocking(move||{let value=collector.sample(&country.0,&country.1);(collector,value)});
+                let job=tokio::task::spawn_blocking(move||{let value=collector.sample(&country);(collector,value)});
                 let Ok((next,value))=job.await else{sample_stop.cancel();return;};collector=next;
                 if let Ok(value)=value{metrics_tx.send_replace(Some(value));}
             }

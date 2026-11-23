@@ -111,6 +111,8 @@ pub struct Node {
     pub country_auto: bool,
     #[serde(rename = "detectedIP")]
     pub detected_ip: String,
+    #[serde(rename = "detectedIPs", skip_serializing_if = "Option::is_none")]
+    pub detected_ips: Option<vistart_probe_agent::wire::PublicIps>,
     #[serde(rename = "agentPeerIP", skip_serializing_if = "String::is_empty")]
     pub agent_peer_ip: String,
     #[serde(rename = "deployState")]

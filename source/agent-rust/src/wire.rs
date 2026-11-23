@@ -23,6 +23,19 @@ pub struct NetworkInterface {
     pub rx_rate: Option<f64>,
     pub tx_rate: Option<f64>,
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicIps {
+    pub ipv4: Option<std::net::Ipv4Addr>,
+    pub ipv6: Option<std::net::Ipv6Addr>,
+}
+impl PublicIps {
+    pub fn primary(self) -> String {
+        self.ipv4
+            .map(|a| a.to_string())
+            .or_else(|| self.ipv6.map(|a| a.to_string()))
+            .unwrap_or_default()
+    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Metrics {
     #[serde(default)]
@@ -43,6 +56,8 @@ pub struct Metrics {
     pub uptime: u64,
     pub country: String,
     pub public_ip: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_ips: Option<PublicIps>,
     pub version: String,
 }
 fn zero(v: &u64) -> bool {

@@ -14,7 +14,7 @@ parser.add_argument("--agent-amd64",type=pathlib.Path,required=True)
 parser.add_argument("--agent-arm64",type=pathlib.Path,required=True)
 args=parser.parse_args()
 root=pathlib.Path(__file__).resolve().parent.parent
-version="0.11.6"
+version="0.11.7"
 flavor="rust" if args.variant=="rust" else "panel"
 out=args.output.resolve()
 if out==root or root in out.parents: raise SystemExit("Release output must be outside the source tree")
@@ -87,11 +87,11 @@ for arch in ["amd64","arm64"]:
     expected_machine=62 if arch=="amd64" else 183
     if raw[:4]!=b"\x7fELF" or int.from_bytes(raw[18:20],"little")!=expected_machine:
         raise SystemExit("Agent is not the expected ELF architecture")
-    name=f"vistart-probe-agent-0.2.4-linux-{arch}"
+    name=f"vistart-probe-agent-0.2.5-linux-{arch}"
     shutil.copyfile(path,out/name)
     (out/name).chmod(0o755)
     agents[arch]={"name":name,"size":len(raw),"sha256":hashlib.sha256(raw).hexdigest()}
-sign("stable.json","0.2.4",agents)
+sign("stable.json","0.2.5",agents)
 (out/"Agent-SHA256SUMS").write_text("".join(entry["sha256"]+"  "+entry["name"]+"\n" for entry in agents.values()))
 
 (out/"release-public.txt").write_text(anchor+"\n")

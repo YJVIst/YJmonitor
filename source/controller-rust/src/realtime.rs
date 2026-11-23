@@ -398,7 +398,11 @@ fn apply(i: &mut Inner, id: &str, m: Metrics) -> bool {
             n.public.city.clear();
         }
     }
-    if !m.public_ip.is_empty() {
+    if let Some(addresses) = m.public_ips {
+        n.detected_ip = addresses.primary();
+        n.detected_ips = Some(addresses);
+    } else if !m.public_ip.is_empty() {
+        n.detected_ips = None;
         n.detected_ip = m.public_ip;
     }
     true
