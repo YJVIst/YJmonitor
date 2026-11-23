@@ -42,7 +42,7 @@ for section in ["app","bin","docs","ops","public","source","THIRD-PARTY-NOTICES"
             if p.suffix==".log": continue
             if p.suffix in (".log",".pyc",".zip") or p.name in (".env","signing.key"): raise SystemExit("Unexpected runtime/private file: "+str(rel))
             files[str(rel)]=p.read_bytes()
-for name in ["README.md","LICENSE","SECURITY.md","install.sh","manage.sh","migrate-repository.sh",".gitignore",".gitattributes"]:
+for name in ["README.md","LICENSE","SECURITY.md","install.sh","manage.sh","migrate-repository.sh","migrate-signing-key.sh",".gitignore",".gitattributes"]:
     files[name]=(root/name).read_bytes()
 files["storage/.gitkeep"]=b""
 sums={k:hashlib.sha256(v).hexdigest() for k,v in files.items()}
@@ -96,5 +96,6 @@ sign("stable.json","0.2.4",agents)
 
 (out/"release-public.txt").write_text(anchor+"\n")
 shutil.copyfile(root/"install.sh",out/"install.sh")
+shutil.copyfile(root/"migrate-signing-key.sh",out/"migrate-signing-key.sh")
 shutil.copyfile(root/"ops/agent-release.py",out/"agent-release.py")
 print(json.dumps({"package":entry,"source_files":len(files),"controllers":controllers},indent=2))

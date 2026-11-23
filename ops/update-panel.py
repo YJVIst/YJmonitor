@@ -4,7 +4,7 @@ import http.client,socket
 from contextlib import contextmanager
 import argparse,base64,fcntl,hashlib,json,os,pathlib,pwd,re,shutil,ssl,stat,subprocess,tempfile,time,urllib.request,urllib.parse,urllib.error,zipfile
 REPOSITORY="YJVIst/YJmonitor"
-PUBLIC="o8+DdHbo82V7fxJEIiEhe5AK/frR91Fz5vjf/pDAnts="
+PUBLIC="5knizERV08A6pN/RMSh6ssDTK22NWm0U3+uCe8/4Azk="
 BASE=pathlib.Path("/var/lib/yuji-probe-rust-updater")
 LIB=pathlib.Path("/usr/local/lib/yuji-probe-rust-updater")
 CONF=pathlib.Path("/etc/yuji-probe-rust-updaters")

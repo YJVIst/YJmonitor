@@ -200,7 +200,7 @@ pub async fn get(app: &App, name: &str, limit: usize) -> Result<Vec<u8>, &'stati
         if meta.is_file() && meta.len() <= limit as u64 {
             let raw = std::fs::read(cached).map_err(|_| "release cache unavailable")?;
             // A later controller may require a newer Agent than a repair cache contains.
-            if name == "stable.json" && manifest(&raw)?.version != AGENT_VERSION {
+            if name == "stable.json" && !manifest(&raw).is_ok_and(|m| m.version == AGENT_VERSION) {
                 return fetch_asset(app, RELEASE_VERSION, name, limit).await;
             }
             return Ok(raw);
@@ -575,12 +575,9 @@ mod tests {
     fn signed_agent_manifest_is_required_even_for_version_checks() {
         let raw = include_bytes!("../assets/agent-stable-test.json");
         // This is the original upstream-signed 0.2.3 fixture.
-        assert_eq!(manifest(raw).unwrap().version, "0.2.3");
+        assert_eq!(manifest(raw).err(), Some("signature mismatch"));
         assert_eq!(AGENT_VERSION, vistart_probe_agent::VERSION);
-        assert_eq!(
-            release(raw, "amd64").err(),
-            Some("unsupported release version")
-        );
+        assert_eq!(release(raw, "amd64").err(), Some("signature mismatch"));
         let mut envelope: serde_json::Value = serde_json::from_slice(raw).unwrap();
         envelope["payload"] = json!(STANDARD.encode(br#"{"version":"99.0.0","files":{}}"#));
         assert!(manifest(&serde_json::to_vec(&envelope).unwrap()).is_err());

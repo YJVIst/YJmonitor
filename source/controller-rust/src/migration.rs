@@ -197,6 +197,11 @@ async fn manage(app: &App, node: &Node, task: &Transfer) -> Result<(), &'static 
             return Err("服务器已离线或移除，请在恢复在线后重试");
         }
     }
+    // Old Agents reject releases signed after the 0.2.4 key rotation.
+    // Use the node's existing authenticated SSH tunnel for this one transition.
+    if task.action == "upgrade" && crate::backup::newer_release("0.2.4", &node.agent_version) {
+        return bootstrap(app, node).await;
+    }
     if task.old.recovery_key.is_empty() {
         if task.action == "upgrade" {
             return bootstrap(app, node).await;
@@ -314,7 +319,9 @@ pub async fn bootstrap(app: &App, node: &Node) -> Result<(), &'static str> {
     let command = format!(
         "{prefix}sh -c 'set -eu; umask 077; d=$(mktemp -d /var/tmp/vistart-upgrade.XXXXXXXX); tar -xzf - -C \"$d\"; chmod 700 \"$d\"; nohup sh -c '\\''cd \"$1\"; sh ./install.sh >install.log 2>&1; status=$?; rm -rf -- \"$1\"; exit \"$status\"'\\'' sh \"$d\" </dev/null >/dev/null 2>&1 & echo prepared'"
     );
-    ssh::exec(&client, &command, &archive, 4096).await?;
+    ssh::exec(&client, &command, &archive, 4096)
+        .await
+        .map_err(|_| "SSH 安装失败，请确认已有 SSH 账户具备 root 或免密 sudo 安装权限")?;
     let started = now();
     for _ in 0..65 {
         tokio::time::sleep(Duration::from_secs(1)).await;
