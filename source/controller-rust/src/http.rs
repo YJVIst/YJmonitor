@@ -3,7 +3,7 @@ use axum::{
     Router,
     body::{Body, to_bytes},
     extract::{ConnectInfo, State},
-    http::Request,
+    http::{HeaderValue, Request, StatusCode, header},
     response::{IntoResponse, Response},
     routing::any,
 };
@@ -70,7 +70,11 @@ async fn api(
         }
         {
             let mut i = app.lock();
-            i.request(&c.ip, 120)?;
+            if c.method == "GET" && c.path == "/api/public/nodes" {
+                i.request(&format!("public-board:{}", c.ip), 600)?;
+            } else {
+                i.request(&c.ip, 120)?;
+            }
             i.expire_nodes();
         }
         if !["GET", "POST", "PUT", "PATCH", "DELETE"].contains(&c.method.as_str()) {
@@ -89,7 +93,6 @@ async fn api(
         if app.0.origin.starts_with("http://")
             && (c.path.starts_with("/api/enroll/")
                 || [
-                    "/api/admin/inspect-ssh",
                     "/api/admin/deploy",
                     "/api/admin/enrollment",
                     "/api/admin/terminal-ticket",
@@ -157,9 +160,6 @@ async fn api(
         if c.path.starts_with("/api/admin/mfa/") {
             return auth::mfa(app.clone(), c, bytes).await;
         }
-        if c.path == "/api/admin/inspect-ssh" && c.method == "POST" {
-            return deploy::inspect(app.clone(), c, bytes).await;
-        }
         if c.path.starts_with("/api/admin/theme") && c.method != "GET" {
             return crate::theme::change(app.clone(), c, bytes).await;
         }
@@ -206,8 +206,14 @@ fn dispatch(app: &App, c: &Context, body: &[u8]) -> ApiResult<ApiReply> {
             }
             if i.cache.as_ref().is_none_or(|(at, _)| *at != now()) {
                 #[derive(serde::Serialize)]
+                struct BoardNode<'a> {
+                    #[serde(flatten)]
+                    node: &'a crate::model::PublicNode,
+                    demo: bool,
+                }
+                #[derive(serde::Serialize)]
                 struct Board<'a> {
-                    nodes: Vec<&'a crate::model::PublicNode>,
+                    nodes: Vec<BoardNode<'a>>,
                     site: &'a crate::model::Site,
                     preview: bool,
                     #[serde(rename = "themeRevision")]
@@ -219,7 +225,10 @@ fn dispatch(app: &App, c: &Context, body: &[u8]) -> ApiResult<ApiReply> {
                         .nodes
                         .iter()
                         .filter(|n| n.visible && !n.removing)
-                        .map(|n| &n.public)
+                        .map(|n| BoardNode {
+                            node: &n.public,
+                            demo: n.demo,
+                        })
                         .collect(),
                     site: &i.data.site,
                     preview: i.data.preview,
@@ -256,7 +265,6 @@ fn dispatch(app: &App, c: &Context, body: &[u8]) -> ApiResult<ApiReply> {
         ("/api/admin/enrollment", "POST") => crate::enrollment::issue(app, &mut i, c, body),
         ("/api/admin/terminal-ticket", "POST") => realtime::ticket(app, &mut i, c, body),
         ("/api/admin/terminal-close", "POST") => crate::retained::api(app, &mut i, c, body),
-        ("/api/admin/trust-ssh", "POST") => deploy::trust(app, &mut i, c, body),
         ("/api/admin/deploy", "POST") => deploy::begin(app, &mut i, c, body),
         ("/api/admin/go-live", "POST") => {
             app.guard(&mut i, c, true, true)?;
@@ -291,7 +299,7 @@ fn dispatch(app: &App, c: &Context, body: &[u8]) -> ApiResult<ApiReply> {
                     return nodes::save_node(app, &mut i, c, id, body);
                 }
                 if m == "DELETE" {
-                    return nodes::delete_node(app, &mut i, c, id);
+                    return nodes::delete_node(app, &mut i, c, id, body);
                 }
             }
             if let Some(id) = p.strip_prefix("/api/admin/renewals/")
@@ -320,6 +328,7 @@ pub async fn serve(app: App, listen: SocketAddr) -> Result<(), &'static str> {
     let listener = TcpListener::bind(listen)
         .await
         .map_err(|_| "panel port unavailable")?;
+    tokio::spawn(crate::ssh_address::monitor(app.clone()));
     let router = Router::new()
         .route("/api/agent", any(realtime::agent_handler))
         .route("/api/terminal", any(terminal::handler))
@@ -334,7 +343,56 @@ pub async fn serve(app: App, listen: SocketAddr) -> Result<(), &'static str> {
     crate::operations::start(&app);
     eprintln!("Rust probe controller started");
     loop {
-        tokio::select! {_=app.0.stop.cancelled()=>break,Some(_)=tasks.join_next()=>{},incoming=listener.accept()=>{let(socket,remote)=incoming.map_err(|_|"listener failed")?;let Ok(slot)=slots.clone().try_acquire_owned()else{drop(socket);continue};let router=router.clone();let stop=app.0.stop.clone();tasks.spawn(async move{let _slot=slot;let _=socket.set_nodelay(true);let service=service_fn(move|req:Request<hyper::body::Incoming>|{let router=router.clone();async move{let mut req=req.map(Body::new);req.extensions_mut().insert(ConnectInfo(remote));let size=req.headers().iter().map(|(k,v)|k.as_str().len()+v.len()+4).sum::<usize>();if size>8192||req.uri().to_string().len()>2048{return Ok::<_,Infallible>(ApiError::new(431,"请求头过大").into_response())}router.oneshot(req).await}});let mut builder=hyper::server::conn::http1::Builder::new();builder.timer(TokioTimer::new()).header_read_timeout(Duration::from_secs(5)).max_headers(48).max_buf_size(16384).keep_alive(false);let conn=builder.serve_connection(TokioIo::new(socket),service).with_upgrades();tokio::select!{_=stop.cancelled()=>{},_=conn=>{}}});}}
+        let accepted = tokio::select! {
+            _ = app.0.stop.cancelled() => break,
+            Some(_) = tasks.join_next() => continue,
+            incoming = listener.accept() => incoming,
+        };
+        let (socket, remote) = accepted.map_err(|_| "listener failed")?;
+        let Ok(slot) = slots.clone().try_acquire_owned() else {
+            continue;
+        };
+        let router = router.clone();
+        let stop = app.0.stop.clone();
+        tasks.spawn(async move {
+            let _slot = slot;
+            let _ = socket.set_nodelay(true);
+            let service = service_fn(move |req: Request<hyper::body::Incoming>| {
+                let router = router.clone();
+                async move {
+                    let mut req = req.map(Body::new);
+                    req.extensions_mut().insert(ConnectInfo(remote));
+                    let size: usize = req
+                        .headers()
+                        .iter()
+                        .map(|(k, v)| k.as_str().len() + v.len() + 4)
+                        .sum();
+                    let mut response = if size > 8192 || req.uri().to_string().len() > 2048 {
+                        ApiError::new(431, "请求头过大").into_response()
+                    } else {
+                        router.oneshot(req).await?
+                    };
+                    // Normal requests release the connection slot. A successful
+                    // WebSocket handshake must retain its Connection: upgrade header.
+                    if response.status() != StatusCode::SWITCHING_PROTOCOLS {
+                        response
+                            .headers_mut()
+                            .insert(header::CONNECTION, HeaderValue::from_static("close"));
+                    }
+                    Ok::<_, Infallible>(response)
+                }
+            });
+            let mut builder = hyper::server::conn::http1::Builder::new();
+            builder
+                .timer(TokioTimer::new())
+                .header_read_timeout(Duration::from_secs(5))
+                .max_headers(48)
+                .max_buf_size(16384);
+            let conn = builder
+                .serve_connection(TokioIo::new(socket), service)
+                .with_upgrades();
+            tokio::select! { _=stop.cancelled()=>{}, _=conn=>{} }
+        });
     }
     tasks.abort_all();
     while tasks.join_next().await.is_some() {}

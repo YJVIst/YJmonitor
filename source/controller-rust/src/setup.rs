@@ -95,7 +95,6 @@ pub fn initialize(dir: &Path, v: Input) -> Result<(), &'static str> {
         site: Site {
             name: v.name.trim().into(),
             public: true,
-            refresh_seconds: 5,
         },
         ..Default::default()
     };

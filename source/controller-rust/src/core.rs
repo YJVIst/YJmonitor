@@ -181,9 +181,27 @@ pub fn acceptable_ip(s: &str) -> bool {
         _ => false,
     }
 }
+fn json_size_limit(path: &Path) -> usize {
+    const MIB: usize = 1024 * 1024;
+    match path.file_name().and_then(|s| s.to_str()) {
+        Some("nodes.json") => 64 * MIB,
+        Some("restore-journal.json") => 128 * MIB,
+        Some(name) if name.ends_with(".backup") => 24 * MIB,
+        _ => 16 * MIB,
+    }
+}
+pub fn encode_state_json<T: Serialize>(path: &Path, value: &T) -> std::io::Result<Vec<u8>> {
+    let raw = serde_json::to_vec(value)?;
+    if raw.len() > json_size_limit(path) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::FileTooLarge,
+            "state too large",
+        ));
+    }
+    Ok(raw)
+}
 pub fn atomic_json<T: Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
-    let raw = serde_json::to_vec_pretty(value)?;
-    atomic_bytes(path, &raw)
+    atomic_bytes(path, &encode_state_json(path, value)?)
 }
 pub fn atomic_bytes(path: &Path, raw: &[u8]) -> std::io::Result<()> {
     let tmp = path.with_file_name(format!(
@@ -208,10 +226,11 @@ pub fn atomic_bytes(path: &Path, raw: &[u8]) -> std::io::Result<()> {
 }
 pub fn read_json<T: DeserializeOwned>(path: &Path) -> std::io::Result<T> {
     let mut b = Vec::new();
+    let limit = json_size_limit(path);
     File::open(path)?
-        .take(16 * 1024 * 1024 + 1)
+        .take((limit + 1) as u64)
         .read_to_end(&mut b)?;
-    if b.len() > 16 * 1024 * 1024 {
+    if b.len() > limit {
         return Err(std::io::Error::other("state too large"));
     }
     serde_json::from_slice(&b).map_err(std::io::Error::other)
@@ -340,14 +359,6 @@ pub struct Ticket {
     pub expires: i64,
 }
 #[derive(Clone)]
-pub struct Trust {
-    pub session_id: String,
-    pub address: String,
-    pub key: String,
-    pub previous_key: Option<String>,
-    pub expires: i64,
-}
-#[derive(Clone)]
 pub struct App(pub Arc<Shared>);
 pub struct Shared {
     pub dir: PathBuf,
@@ -377,13 +388,12 @@ pub struct Inner {
     pub agents: HashMap<String, Arc<crate::realtime::AgentLink>>,
     pub agent_reserved: HashSet<String>,
     pub tickets: HashMap<String, Ticket>,
-    pub trust: HashMap<String, Trust>,
-    pub pins: HashMap<String, String>,
     pub jobs: HashMap<String, DeployJob>,
     pub enrollments: HashMap<String, crate::enrollment::Enrollment>,
     pub retained: HashMap<String, crate::retained::Retained>,
     pub file_sessions: HashMap<String, crate::file_sessions::TransferSession>,
     pub terminals: HashMap<String, HashMap<String, CancellationToken>>,
+    pub ssh_dns: HashMap<String, Vec<IpAddr>>,
     pub routes: HashMap<String, crate::diagnostics::State>,
     pub route_owners: crate::diagnostics::Owners,
     pub file_edits: HashSet<String>,
@@ -400,6 +410,11 @@ impl App {
     }
     pub fn new(dir: PathBuf, origin: String, php_gateway: bool) -> Result<Self, &'static str> {
         crate::backup::complete_restore(&dir)?;
+        match fs::remove_file(dir.join("ssh-pins.json")) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err("cannot retire obsolete SSH trust file"),
+        }
         let auth: Auth =
             read_json(&dir.join("auth.json")).map_err(|_| "authentication state unavailable")?;
         let mut data: Data =
@@ -491,17 +506,12 @@ impl App {
             agents: HashMap::new(),
             agent_reserved: HashSet::new(),
             tickets: HashMap::new(),
-            trust: HashMap::new(),
-            pins: match read_json(&dir.join("ssh-pins.json")) {
-                Ok(v) => v,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => HashMap::new(),
-                Err(_) => return Err("SSH trust state unavailable"),
-            },
             jobs: HashMap::new(),
             enrollments: HashMap::new(),
             retained: crate::retained::load(&dir)?,
             file_sessions: crate::file_sessions::load(&dir)?,
             terminals: HashMap::new(),
+            ssh_dns: HashMap::new(),
             routes: HashMap::new(),
             route_owners: crate::diagnostics::Owners::default(),
             file_edits: HashSet::new(),
@@ -603,7 +613,13 @@ impl App {
         }
     }
     pub fn save_data(&self, i: &mut Inner, data: Data) -> ApiResult<()> {
-        atomic_json(&self.0.dir.join("nodes.json"), &data).map_err(|_| ApiError::internal())?;
+        atomic_json(&self.0.dir.join("nodes.json"), &data).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::FileTooLarge {
+                ApiError::new(413, "节点状态超过 64 MiB，未保存更改")
+            } else {
+                ApiError::internal()
+            }
+        })?;
         i.data = data;
         i.cache = None;
         i.admin_cache = None;
@@ -749,7 +765,10 @@ impl Inner {
             };
         }
         if a.count >= limit {
-            return Err(ApiError::rate("请求过于频繁，请稍后重试", 60));
+            return Err(ApiError::rate(
+                "请求过于频繁，请稍后重试",
+                (a.until.timestamp() - t).clamp(1, 60) as u16,
+            ));
         }
         a.count += 1;
         Ok(())

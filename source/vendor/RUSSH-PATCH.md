@@ -12,7 +12,7 @@ Changes:
 - Report Error::KeyExchangeTimeout separately from Error::KeepaliveTimeout.
 - Gate the decompression-only constant with the existing compression feature.
 
-No cipher, key agreement, host-key verification, or authentication algorithm is changed.
+The 0.11.6 controller updates rsa to 0.10.0, pkcs1 to 0.8.0 and ssh-key to 0.7.0-rc.12. The existing RSA format readers use the new private-key type names. Host signature and managed Ed25519 identity checks still follow the same application paths.
 Regression coverage: source/controller-rust/tests/ssh_liveness.rs.
 
 The crate archive omits a standalone license file. This repository supplies the standard Apache 2.0 text in russh/LICENSE and its third-party notices; original source copyright and license headers remain unchanged.

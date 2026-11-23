@@ -32,7 +32,7 @@ impl client::Handler for Verifier {
         let public = key.public_key();
         let bytes = public.to_bytes().map_err(|_| russh::Error::UnknownKey)?;
         *self.inspected.lock().unwrap() = Some(public);
-        Ok(self.expected.as_ref().is_some_and(|v| v == &bytes))
+        Ok(self.expected.as_ref().is_none_or(|v| v == &bytes))
     }
 }
 fn algorithms(key: Option<&PublicKey>) -> Vec<Algorithm> {
@@ -110,23 +110,6 @@ pub async fn connect<T: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
     .map_err(|_| "SSH connection timeout")?
     .map_err(|_| "SSH handshake failed")
 }
-pub async fn inspect(address: std::net::SocketAddr) -> Result<PublicKey, &'static str> {
-    let observed = Arc::new(Mutex::new(None));
-    let stream = timeout(
-        Duration::from_secs(8),
-        tokio::net::TcpStream::connect(address),
-    )
-    .await
-    .map_err(|_| "SSH connection timeout")?
-    .map_err(|_| "SSH connection failed")?;
-    let _ = timeout(
-        Duration::from_secs(8),
-        connect(stream, None, observed.clone()),
-    )
-    .await;
-    let key = observed.lock().unwrap().clone();
-    key.ok_or("SSH host key unavailable")
-}
 pub async fn agent_client(
     app: &App,
     link: Arc<AgentLink>,
@@ -142,7 +125,12 @@ pub async fn agent_client(
         return Err("unsupported managed SSH identity");
     }
     let stream = link.open().await?;
-    let mut client = connect(stream, Some(&secret.host_key), Arc::new(Mutex::new(None))).await?;
+    let mut client = connect(
+        stream,
+        (!secret.host_key.is_empty()).then_some(secret.host_key.as_str()),
+        Arc::new(Mutex::new(None)),
+    )
+    .await?;
     let ok = timeout(
         Duration::from_secs(10),
         client.authenticate_publickey(user, PrivateKeyWithHashAlg::new(Arc::new(key), None)),
@@ -156,19 +144,20 @@ pub async fn agent_client(
     Ok(Arc::new(client))
 }
 pub async fn password_client(
-    address: std::net::SocketAddr,
+    host: &str,
+    port: u16,
     user: &str,
     password: &str,
-    pin: &str,
-) -> Result<Arc<Client>, &'static str> {
+) -> Result<(Arc<Client>, Vec<u8>), &'static str> {
     let stream = timeout(
         Duration::from_secs(12),
-        tokio::net::TcpStream::connect(address),
+        crate::ssh_address::connect(host, port),
     )
     .await
     .map_err(|_| "SSH connection timeout")?
     .map_err(|_| "SSH connection failed")?;
-    let mut client = connect(stream, Some(pin), Arc::new(Mutex::new(None))).await?;
+    let observed = Arc::new(Mutex::new(None));
+    let mut client = connect(stream, None, observed.clone()).await?;
     let ok = timeout(
         Duration::from_secs(10),
         client.authenticate_password(user, password),
@@ -179,7 +168,7 @@ pub async fn password_client(
     if !ok.success() {
         return Err("SSH authentication failed");
     }
-    Ok(Arc::new(client))
+    Ok((Arc::new(client), observed_bytes(&observed)?))
 }
 pub fn quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
@@ -273,28 +262,60 @@ pub fn create_key(comment: &str) -> Result<(Zeroizing<Vec<u8>>, String), &'stati
     Ok((Zeroizing::new(private.as_bytes().to_vec()), public))
 }
 
+fn observed_bytes(observed: &Mutex<Option<PublicKey>>) -> Result<Vec<u8>, &'static str> {
+    observed
+        .lock()
+        .unwrap()
+        .as_ref()
+        .ok_or("SSH key unavailable")?
+        .to_bytes()
+        .map_err(|_| "SSH key invalid")
+}
+
+// Only the SSH client's recovery identity is persisted. Deriving it from the negotiated
+// server key prevents unattended recovery from disclosing an Agent token to a reassigned IP.
+fn recovery_identity(seed: &[u8], host: &[u8]) -> Result<PrivateKey, &'static str> {
+    use hmac::{Hmac, KeyInit, Mac};
+    let mut mac =
+        Hmac::<sha2::Sha256>::new_from_slice(seed).map_err(|_| "recovery seed invalid")?;
+    mac.update(b"YJmonitor recovery SSH identity v1\0");
+    mac.update(host);
+    let secret = Zeroizing::new(<[u8; 32]>::from(mac.finalize().into_bytes()));
+    Ok(russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&secret).into())
+}
+pub fn bind_recovery(
+    app: &App,
+    id: &str,
+    secret: &mut NodeSecret,
+    host: &[u8],
+) -> Result<(), &'static str> {
+    let seed = app.unseal(&format!("{id}:recovery"), &secret.recovery_key)?;
+    let key = recovery_identity(&seed, host)?;
+    secret.recovery_public = key
+        .public_key()
+        .to_openssh()
+        .map_err(|_| "invalid recovery identity")?;
+    secret.derived_recovery = true;
+    secret.host_key.clear();
+    Ok(())
+}
+
 trait RecoveryStream: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> RecoveryStream for T {}
 pub async fn recovery_client(
     app: &App,
     node: &crate::model::Node,
     secret: &NodeSecret,
-) -> Result<Arc<Client>, &'static str> {
+) -> Result<(Arc<Client>, Vec<u8>), &'static str> {
     let raw = app.unseal(
         &format!("{}:recovery", node.public.id),
         &secret.recovery_key,
     )?;
-    let key = PrivateKey::from_openssh(raw.as_slice()).map_err(|_| "recovery identity invalid")?;
-    if key.algorithm() != Algorithm::Ed25519 {
-        return Err("unsupported recovery identity");
-    }
-    let address = std::net::SocketAddr::new(
-        node.ip.parse().map_err(|_| "node address invalid")?,
-        u16::try_from(node.port).map_err(|_| "node port invalid")?,
-    );
+    let host = &node.ip;
+    let port = u16::try_from(node.port).map_err(|_| "node port invalid")?;
     let stream: Box<dyn RecoveryStream> = match timeout(
         Duration::from_secs(8),
-        tokio::net::TcpStream::connect(address),
+        crate::ssh_address::connect(host, port),
     )
     .await
     {
@@ -309,7 +330,30 @@ pub async fn recovery_client(
             Box::new(link.open().await?)
         }
     };
-    let mut client = connect(stream, Some(&secret.host_key), Arc::new(Mutex::new(None))).await?;
+    let observed = Arc::new(Mutex::new(None));
+    let pin = (!secret.host_key.is_empty()).then_some(secret.host_key.as_str());
+    if pin.is_none() && !secret.derived_recovery {
+        return Err("recovery identity unavailable");
+    }
+    let mut client = connect(stream, pin, observed.clone()).await?;
+    let host_key = observed_bytes(&observed)?;
+    let key = if secret.derived_recovery {
+        let key = recovery_identity(&raw, &host_key)?;
+        if key
+            .public_key()
+            .to_openssh()
+            .map_err(|_| "invalid recovery identity")?
+            != secret.recovery_public
+        {
+            return Err("recovery identity changed");
+        }
+        key
+    } else {
+        PrivateKey::from_openssh(raw.as_slice()).map_err(|_| "recovery identity invalid")?
+    };
+    if key.algorithm() != Algorithm::Ed25519 {
+        return Err("unsupported recovery identity");
+    }
     let ok = timeout(
         Duration::from_secs(10),
         client.authenticate_publickey(
@@ -323,7 +367,7 @@ pub async fn recovery_client(
     if !ok.success() {
         return Err("recovery key rejected");
     }
-    Ok(Arc::new(client))
+    Ok((Arc::new(client), host_key))
 }
 
 #[cfg(test)]
@@ -342,8 +386,16 @@ mod host_key_tests {
             Ok(russh::server::Auth::Accept)
         }
     }
+    #[test]
+    fn unattended_recovery_credentials_are_specific_to_the_enrolled_server() {
+        let first = recovery_identity(b"private node seed", b"server one").unwrap();
+        let same = recovery_identity(b"private node seed", b"server one").unwrap();
+        let other = recovery_identity(b"private node seed", b"server two").unwrap();
+        assert_eq!(first.public_key(), same.public_key());
+        assert_ne!(first.public_key(), other.public_key());
+    }
     #[tokio::test]
-    async fn changed_host_cannot_receive_password_until_exact_key_is_pinned() {
+    async fn password_install_accepts_first_and_rotated_hosts_and_legacy_recovery_checks_its_key() {
         timeout(Duration::from_secs(8), async {
             let (raw, _) = create_key("rotated-host-fixture").unwrap();
             let host = PrivateKey::from_openssh(raw.as_slice()).unwrap();
@@ -370,7 +422,7 @@ mod host_key_tests {
                     inspected.lock().unwrap().as_ref().unwrap().key_data(),
                     host.public_key().key_data()
                 );
-                if pin == Some(new_pin.as_str()) {
+                if pin.is_none() || pin == Some(new_pin.as_str()) {
                     let mut client = result.unwrap();
                     assert!(
                         client

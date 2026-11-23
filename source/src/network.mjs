@@ -1,8 +1,9 @@
+const byteFormats=[0,2].map(maximumFractionDigits=>new Intl.NumberFormat('zh-CN',{maximumFractionDigits}));
 export function formatBytes(value){
  if(typeof value!=='number'||!Number.isFinite(value)||value<0)return '—';
  const units=['B','KiB','MiB','GiB','TiB','PiB'];let i=0;
  while(value>=1024&&i<units.length-1){value/=1024;i++;}
- return new Intl.NumberFormat('zh-CN',{maximumFractionDigits:i?2:0}).format(value)+' '+units[i];
+ return byteFormats[i?1:0].format(value)+' '+units[i];
 }
 export function createNetworkUI({el}){
  const choices=new Map();
@@ -16,25 +17,77 @@ export function createNetworkUI({el}){
   }
   return box;
  }
+ const states=new WeakMap();
  function card(node){
-  const box=el('section','network-block');box.setAttribute('aria-label','网卡流量');
-  const heading=el('div','network-heading');heading.append(el('span','metric-label','网络'));
-  const interfaces=node.networkAvailable&&Array.isArray(node.network)?node.network:[];
-  if(!interfaces.length){heading.append(el('span','network-empty','暂无网卡数据'));box.append(heading);return box;}
-  const selected=interfaces.find(n=>n.name===choices.get(node.id))||interfaces.find(n=>n.default)||interfaces[0];
-  const select=el('select','network-selector');select.dataset.node=node.id;select.setAttribute('aria-label',node.name+' 网卡');
-  for(const nic of interfaces){const o=el('option','',nic.name+(nic.default?' · 默认':''));o.value=nic.name;select.append(o);}select.value=selected.name;
-  heading.append(select);let metrics=values(selected,node.online,true);box.append(heading,metrics);
-  select.addEventListener('change',()=>{choices.set(node.id,select.value);const next=values(interfaces.find(n=>n.name===select.value),node.online,true);metrics.replaceWith(next);metrics=next;});
-  box.title='累计收发量来自网卡计数，随系统重启或网卡重建重置；不作为计费流量。';return box;
+  const box=el('section','network-block'),heading=el('div','network-heading');
+  box.setAttribute('aria-label','网卡流量');heading.append(el('span','metric-label','网络'));box.append(heading);
+  const select=el('select','network-selector'),empty=el('span','network-empty','暂无网卡数据');
+  select.dataset.node=node.id;select.setAttribute('aria-label',node.name+' 网卡');heading.append(select,empty);
+  const metrics=values(null,false,true);box.append(metrics);
+  const state={select,empty,metrics,fields:[...metrics.querySelectorAll('dd')],node};states.set(box,state);
+  select.addEventListener('change',()=>{choices.set(state.node.id,select.value);updateCard(box,state.node);});
+  updateCard(box,node);return box;
  }
- function detail(node){
-  const section=el('section','detail-network');const heading=el('div','section-heading');heading.append(el('h3','','网卡流量'),el('span','',node.online?'实时采样':'最后一次上报'));section.append(heading);
+ function updateCard(box,node){
+  const s=states.get(box);s.node=node;
   const interfaces=node.networkAvailable&&Array.isArray(node.network)?node.network:[];
-  if(!interfaces.length){section.append(el('p','network-empty','暂无网卡数据'));return section;}
-  const list=el('div','network-interface-list');
-  for(const nic of interfaces){const row=el('article','network-interface');const top=el('div','network-interface-heading');top.append(el('strong','',nic.name));const tags=el('span','network-interface-tags');if(nic.default)tags.append(el('span','','默认路由'));if(nic.virtual)tags.append(el('span','','虚拟网卡'));tags.append(el('span','',node.online?(stateName[nic.state]||nic.state):'离线'));top.append(tags);row.append(top,values(nic,node.online,false));list.append(row);}
-  section.append(list,el('p','form-footnote','累计值为网卡收发计数，系统重启或网卡重建后可能重置。各网卡分别展示，避免桥接、隧道流量重复相加。'));return section;
+  const previous=s.interfaces;
+  if(!previous||interfaces.length!==previous.length||interfaces.some((nic,i)=>nic.name!==previous[i].name||!!nic.default!==!!previous[i].default)){
+   s.select.replaceChildren(...interfaces.map(n=>new Option(n.name+(n.default?' · 默认':''),n.name)));
+   s.select.hidden=s.metrics.hidden=!interfaces.length;s.empty.hidden=!!interfaces.length;
+  }
+  s.interfaces=interfaces;
+  if(!interfaces.length){s.nic=null;return;}
+  const nic=interfaces.find(n=>n.name===choices.get(node.id))||interfaces.find(n=>n.default)||interfaces[0];
+  if(s.select.value!==nic.name)s.select.value=nic.name;
+  const old=s.nic, onlineChanged=s.online!==node.online;
+  for(const [i,key] of ['rx_rate','rx_bytes','tx_rate','tx_bytes'].entries()){
+   const rate=i===0||i===2;
+   if(old&&old[key]===nic[key]&&(!rate||!onlineChanged))continue;
+   const value=rate?(node.online&&Number.isFinite(nic[key])?formatBytes(nic[key])+'/s':'—'):formatBytes(nic[key]);
+   if(s.fields[i].textContent!==value)s.fields[i].textContent=value;
+  }
+  s.nic=nic;s.online=node.online;
  }
- return {card,detail};
+ function detail(){
+  const section=el('section','detail-network'),heading=el('div','section-heading'),status=el('span');
+  heading.append(el('h3','','网卡流量'),status);
+  const list=el('div','network-interface-list'),empty=el('p','network-empty','暂无网卡数据');
+  const foot=el('p','form-footnote','累计值为网卡收发计数，系统重启或网卡重建后可能重置。各网卡分别展示，避免桥接、隧道流量重复相加。');
+  section.append(heading,empty,list,foot);
+  const rows=new Map();
+  function update(node){
+   const interfaces=node.networkAvailable&&Array.isArray(node.network)?node.network:[];
+   const names=new Set(interfaces.map(n=>n.name));
+   for(const [name,row] of rows)if(!names.has(name)){row.item.remove();rows.delete(name);}
+   const put=(field,value)=>{if(field.textContent!==value)field.textContent=value;};
+   put(status,node.online?'实时采样':'最后一次上报');
+   if(empty.hidden!==!!interfaces.length){empty.hidden=!!interfaces.length;list.hidden=foot.hidden=!interfaces.length;}
+   if(!interfaces.length){if(!list.hidden)list.hidden=foot.hidden=true;return;}
+   let cursor=list.firstElementChild;
+   for(const nic of interfaces){
+    let row=rows.get(nic.name);
+    if(!row){
+     const item=el('article','network-interface'),top=el('div','network-interface-heading'),tags=el('span','network-interface-tags');
+     const route=el('span','','默认路由'),virtual=el('span','','虚拟网卡'),state=el('span');
+     tags.append(route,virtual,state);top.append(el('strong','',nic.name),tags);
+     const metrics=values(null,false,false);item.append(top,metrics);
+     row={item,route,virtual,state,fields:[...metrics.querySelectorAll('dd')]};rows.set(nic.name,row);
+    }
+    if(row.item!==cursor)list.insertBefore(row.item,cursor);
+    cursor=row.item.nextElementSibling;
+    if(row.route.hidden===!!nic.default)row.route.hidden=!nic.default;
+    if(row.virtual.hidden===!!nic.virtual)row.virtual.hidden=!nic.virtual;
+    put(row.state,node.online?(stateName[nic.state]||nic.state||'可用'):'离线');
+    for(const [i,key] of ['rx_rate','rx_bytes','tx_rate','tx_bytes'].entries()){
+     const rate=i%2===0;
+     if(row.previous&&row.previous[key]===nic[key]&&(!rate||row.online===node.online))continue;
+     put(row.fields[i],rate?(node.online&&Number.isFinite(nic[key])?formatBytes(nic[key])+'/s':'—'):formatBytes(nic[key]));
+    }
+    row.previous=nic;row.online=node.online;
+   }
+  }
+  return {section,update};
+ }
+ return {card,updateCard,detail};
 }

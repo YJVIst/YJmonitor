@@ -116,7 +116,7 @@ fn start_next(app: &App) {
         let previous = t.clone();
         t.state = "running".into();
         t.updated_at = now();
-        t.message = "正在校验 SSH 指纹并连接".into();
+        t.message = "正在连接被控服务器".into();
         let task = t.clone();
         if operations::save(app, &i).is_err() {
             i.ops.transfers.insert(id.clone(), previous);
@@ -155,7 +155,7 @@ fn start_next(app: &App) {
                     t.old = NodeSecret::default();
                 }
                 Err(e) => {
-                    t.state = if task.batch_id.is_empty() {
+                    t.state = if task.batch_id.is_empty() && task.action != "remove" {
                         "retry"
                     } else {
                         "failed"
@@ -166,18 +166,12 @@ fn start_next(app: &App) {
                 }
             }
         }
-        if result.is_ok() && task.action == "remove" {
-            let mut data = i.data.clone();
-            data.nodes.retain(|n| n.public.id != id);
-            data.secrets.remove(&id);
-            if app.save_data(&mut i, data).is_ok() {
-                if let Some(link) = i.agents.remove(&id) {
-                    link.stop.cancel();
-                }
-                i.ops.removal_names.remove(&id);
-                i.ops.retired.remove(&id);
-                i.ops.transfers.remove(&id);
-            }
+        if result.is_ok()
+            && task.action == "remove"
+            && crate::nodes::finish_removal(&app, &mut i, &id).is_err()
+            && let Some(t) = i.ops.transfers.get_mut(&id)
+        {
+            t.message = "远端清理已完成，请再次移除以完成本地保存".into();
         }
         app.record(
             &mut i,
@@ -203,26 +197,37 @@ async fn manage(app: &App, node: &Node, task: &Transfer) -> Result<(), &'static 
             return Err("服务器已离线或移除，请在恢复在线后重试");
         }
     }
+    // Old Agents reject releases signed after the 0.2.4 key rotation.
+    // Use the node's existing authenticated SSH tunnel for this one transition.
+    if task.action == "upgrade" && crate::backup::newer_release("0.2.4", &node.agent_version) {
+        return bootstrap(app, node).await;
+    }
     if task.old.recovery_key.is_empty() {
         if task.action == "upgrade" {
             return bootstrap(app, node).await;
         }
         return Err("旧 Agent 尚未安装恢复密钥，请在原主控升级 Agent 或填写 SSH 密码重新部署");
     }
-    let client = ssh::recovery_client(app, node, &task.old)
+    let (client, host_key) = ssh::recovery_client(app, node, &task.old)
         .await
         .map_err(|_| "SSH 无法连接或恢复密钥验证失败")?;
     let proof = app.unseal(&format!("{}:token", node.public.id), &task.old.token)?;
     let proof = std::str::from_utf8(&proof).map_err(|_| "恢复凭据不可用")?;
     let mut request = json!({"action":task.action,"proof":proof});
     if task.action == "reconfigure" {
-        let secret = app
-            .lock()
-            .data
-            .secrets
-            .get(&node.public.id)
-            .cloned()
-            .ok_or("新节点凭据不可用")?;
+        let secret = {
+            let mut i = app.lock();
+            let mut data = i.data.clone();
+            let next = data
+                .secrets
+                .get_mut(&node.public.id)
+                .ok_or("新节点凭据不可用")?;
+            ssh::bind_recovery(app, &node.public.id, next, &host_key)?;
+            let secret = next.clone();
+            app.save_data(&mut i, data)
+                .map_err(|_| "保存恢复凭据失败")?;
+            secret
+        };
         let token = app.unseal(&format!("{}:token", node.public.id), &secret.token)?;
         request["config"] = json!({"node_id":node.public.id,"token":std::str::from_utf8(&token).map_err(|_|"节点凭据不可用")?,"ssh_port":node.port,"controller_url":task.target.replacen("https://","wss://",1)+"/api/agent"});
         request["public_key"] = json!(secret.public_key);
@@ -248,7 +253,7 @@ async fn manage(app: &App, node: &Node, task: &Transfer) -> Result<(), &'static 
     match result {
         Ok(reply) if reply.lines().any(|v| v.trim() == r#"{"ok":true}"#) => {
             if task.action == "upgrade" {
-                let client = ssh::recovery_client(app, node, &task.old).await?;
+                let (client, _) = ssh::recovery_client(app, node, &task.old).await?;
                 let input = zeroize::Zeroizing::new(
                     serde_json::to_vec(&json!({"action":"terminal-prepare","proof":proof}))
                         .map_err(|_| "terminal dependency request unavailable")?,
@@ -314,7 +319,9 @@ pub async fn bootstrap(app: &App, node: &Node) -> Result<(), &'static str> {
     let command = format!(
         "{prefix}sh -c 'set -eu; umask 077; d=$(mktemp -d /var/tmp/vistart-upgrade.XXXXXXXX); tar -xzf - -C \"$d\"; chmod 700 \"$d\"; nohup sh -c '\\''cd \"$1\"; sh ./install.sh >install.log 2>&1; status=$?; rm -rf -- \"$1\"; exit \"$status\"'\\'' sh \"$d\" </dev/null >/dev/null 2>&1 & echo prepared'"
     );
-    ssh::exec(&client, &command, &archive, 4096).await?;
+    ssh::exec(&client, &command, &archive, 4096)
+        .await
+        .map_err(|_| "SSH 安装失败，请确认已有 SSH 账户具备 root 或免密 sudo 安装权限")?;
     let started = now();
     for _ in 0..65 {
         tokio::time::sleep(Duration::from_secs(1)).await;

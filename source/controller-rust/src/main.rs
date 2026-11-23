@@ -20,6 +20,7 @@ mod retained;
 mod server_management;
 mod setup;
 mod ssh;
+mod ssh_address;
 mod telegram;
 mod terminal;
 mod theme;
@@ -187,7 +188,6 @@ fn init(o: &Options) -> Result<(), &'static str> {
         site: Site {
             name: "羽迹探针".into(),
             public: true,
-            refresh_seconds: 3,
         },
         ..Default::default()
     };

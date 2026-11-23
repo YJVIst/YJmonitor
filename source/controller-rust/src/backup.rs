@@ -48,7 +48,13 @@ struct Bundle {
         deserialize_with = "discard_legacy"
     )]
     _legacy_tracks: (),
-    pins: HashMap<String, String>,
+    #[serde(
+        default,
+        rename = "pins",
+        skip_serializing,
+        deserialize_with = "discard_legacy"
+    )]
+    _legacy_pins: (),
 }
 fn discard_legacy<'de, D: serde::Deserializer<'de>>(d: D) -> Result<(), D::Error> {
     serde::de::IgnoredAny::deserialize(d)?;
@@ -156,7 +162,6 @@ fn unpack(value: Value, passphrase: &str) -> ApiResult<Bundle> {
     if b.schema != 1
         || b.data.nodes.len() > MAX_NODES
         || b.data.commands.len() > 50
-        || b.pins.len() > MAX_NODES * 2
         || !valid_text(&b.data.site.name, 60)
         || !username(&b.auth.username)
         || b.auth.hash.len() > 128
@@ -165,7 +170,7 @@ fn unpack(value: Value, passphrase: &str) -> ApiResult<Bundle> {
     }
     if b.data.nodes.iter().any(|n| {
         !operations::valid_id(&n.public.id)
-            || !acceptable_ip(&n.ip)
+            || crate::ssh_address::normalize(&n.ip).is_none()
             || !username(&n.username)
             || !(1..=65535).contains(&n.port)
             || n.public.group.chars().count() > 40
@@ -207,7 +212,7 @@ fn snapshot(app: &App, i: &Inner) -> Bundle {
         telegram: i.telegram.clone(),
         operations,
         _legacy_tracks: (),
-        pins: i.pins.clone(),
+        _legacy_pins: (),
     }
 }
 pub async fn api(app: App, c: Context, body: Vec<u8>) -> ApiResult<ApiReply> {
@@ -432,6 +437,7 @@ fn restore(app: &App, i: &mut Inner, mut b: Bundle) -> ApiResult<bool> {
                         .map_err(|_| ApiError::internal())?,
                     public_key: public,
                     host_key: old.host_key.clone(),
+                    derived_recovery: false,
                     recovery_key: app
                         .seal(&format!("{id}:recovery"), &recovery)
                         .map_err(|_| ApiError::internal())?,
@@ -468,9 +474,11 @@ fn restore(app: &App, i: &mut Inner, mut b: Bundle) -> ApiResult<bool> {
         ("nodes.json", serde_json::to_value(&b.data)),
         ("telegram.json", serde_json::to_value(&b.telegram)),
         ("operations.json", serde_json::to_value(&b.operations)),
-        ("ssh-pins.json", serde_json::to_value(&b.pins)),
     ] {
-        files.insert(name.to_string(), value.map_err(|_| ApiError::internal())?);
+        let value = value.map_err(|_| ApiError::internal())?;
+        encode_state_json(&app.0.dir.join(name), &value)
+            .map_err(|_| ApiError::new(413, "备份状态超过容量限制"))?;
+        files.insert(name.to_string(), value);
     }
     atomic_json(&app.0.dir.join("restore-journal.json"), &files)
         .map_err(|_| ApiError::internal())?;
@@ -485,7 +493,7 @@ fn restore(app: &App, i: &mut Inner, mut b: Bundle) -> ApiResult<bool> {
     }
     i.agents.clear();
     i.tickets.clear();
-    i.trust.clear();
+    i.ssh_dns.clear();
     i.jobs.clear();
     i.cache = None;
     i.theme_cache = None;
@@ -493,7 +501,6 @@ fn restore(app: &App, i: &mut Inner, mut b: Bundle) -> ApiResult<bool> {
     i.data = b.data;
     i.telegram = b.telegram;
     i.ops = b.operations;
-    i.pins = b.pins;
     // Clear old delivery before allowing imported notification credentials.
     if let Some((_, cancel)) = &i.delivery {
         cancel.cancel();
@@ -508,31 +515,30 @@ pub fn complete_restore(dir: &std::path::Path) -> Result<(), &'static str> {
     if !path.exists() {
         return Ok(());
     }
-    let mut raw = Vec::new();
-    std::fs::File::open(&path)
-        .map_err(|_| "restore journal unavailable")?
-        .take((RAW_LIMIT + 1) as u64)
-        .read_to_end(&mut raw)
-        .map_err(|_| "restore journal unavailable")?;
-    if raw.len() > RAW_LIMIT {
-        return Err("restore journal too large");
-    }
     let mut files: HashMap<String, Value> =
-        serde_json::from_slice(&raw).map_err(|_| "restore journal invalid")?;
+        read_json(&path).map_err(|_| "restore journal invalid or too large")?;
     let allowed = [
         "auth.json",
         "nodes.json",
         "telegram.json",
         "operations.json",
-        "ssh-pins.json",
     ];
     // Resume a v0.5.0 restore without reintroducing removed history files.
     files.remove("history");
+    files.remove("ssh-pins.json");
     if files.len() != allowed.len() || !files.keys().all(|v| allowed.contains(&v.as_str())) {
         return Err("restore journal invalid");
     }
-    for (name, value) in files {
-        atomic_json(&dir.join(name), &value).map_err(|_| "restore commit failed")?;
+    let prepared = files
+        .into_iter()
+        .map(|(name, value)| {
+            let path = dir.join(name);
+            let bytes = encode_state_json(&path, &value).map_err(|_| "restore state too large")?;
+            Ok((path, bytes))
+        })
+        .collect::<Result<Vec<_>, &'static str>>()?;
+    for (path, bytes) in prepared {
+        atomic_bytes(&path, &bytes).map_err(|_| "restore commit failed")?;
     }
     std::fs::remove_file(path).map_err(|_| "restore commit failed")?;
     Ok(())
@@ -668,7 +674,7 @@ mod tests {
             telegram: TelegramState::default(),
             operations: State::default(),
             _legacy_tracks: (),
-            pins: HashMap::new(),
+            _legacy_pins: (),
         };
         for num in 0..MAX_NODES {
             let id = format!("backup-{num}");
@@ -739,6 +745,33 @@ mod legacy_tests {
         assert!(clean.get("tracks").is_none());
         assert!(clean["operations"].get("alarms").is_none());
         assert!(clean["data"]["nodes"][0].get("policy").is_none());
+    }
+    #[test]
+    fn oversized_journal_member_leaves_all_live_files_intact() {
+        let dir = std::env::temp_dir().join(format!("yuji-oversize-{}", token()));
+        std::fs::create_dir(&dir).unwrap();
+        let files = json!({"auth.json":{}, "nodes.json":{}, "telegram.json":"x".repeat(16*1024*1024), "operations.json":{}});
+        atomic_json(&dir.join("restore-journal.json"), &files).unwrap();
+        assert!(complete_restore(&dir).is_err());
+        for name in files.as_object().unwrap().keys() {
+            assert!(!dir.join(name).exists());
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn nodes_legacy_size_and_failed_overwrite() {
+        let dir = std::env::temp_dir().join(format!("yuji-capacity-{}", token()));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("nodes.json");
+        let legacy = " ".repeat(17 * 1024 * 1024) + r#"{"v":1}"#;
+        std::fs::write(&path, legacy).unwrap();
+        assert_eq!(read_json::<Value>(&path).unwrap(), json!({"v":1}));
+        let large = "x".repeat(17 * 1024 * 1024);
+        atomic_json(&path, &large).unwrap();
+        assert_eq!(read_json::<String>(&path).unwrap(), large);
+        assert!(atomic_json(&path, &"x".repeat(64 * 1024 * 1024)).is_err());
+        assert_eq!(read_json::<String>(&path).unwrap(), large);
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn old_restore_journal_ignores_retired_history_and_rejects_paths() {

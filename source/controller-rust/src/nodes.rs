@@ -2,7 +2,6 @@ use crate::{core::*, model::*};
 use chrono::{DateTime, Datelike, FixedOffset, TimeZone, Utc};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::net::IpAddr;
 #[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
 struct NodeInput {
@@ -41,7 +40,8 @@ struct RenewalInput {
 struct SiteInput {
     name: String,
     public: bool,
-    refresh_seconds: i64,
+    #[serde(rename = "refreshSeconds")]
+    _legacy_interval: Option<i64>,
 }
 #[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -198,15 +198,18 @@ pub fn save_node(
     app.guard(i, c, true, true)?;
     let mut v: NodeInput = decode(body)?;
     v.name = v.name.trim().into();
-    v.ip = v.ip.trim().into();
+    v.ip = crate::ssh_address::normalize(&v.ip)
+        .ok_or_else(|| ApiError::new(400, "请填写有效的 SSH 域名或 IP 地址"))?;
     if !valid_text(&v.name, 80)
-        || !acceptable_ip(&v.ip)
         || !(1..=65535).contains(&v.port)
         || !username(&v.username)
         || v.password.len() > 256
         || v.password.contains('\0')
     {
-        return Err(ApiError::new(400, "请检查服务器名称、SSH IP、端口和用户名"));
+        return Err(ApiError::new(
+            400,
+            "请检查服务器名称、SSH 地址、端口和用户名",
+        ));
     }
     if v.country.is_empty() {
         v.country = "待识别".into()
@@ -258,9 +261,11 @@ pub fn save_node(
             ..Default::default()
         }
     };
-    let ip = v.ip.parse::<IpAddr>().unwrap().to_string();
-    if !id.is_empty()
-        && (n.ip != ip || n.port != v.port || n.username != v.username)
+    let restricted_change = n.port != v.port
+        || n.username != v.username
+        || (n.ip != v.ip && v.ip.parse::<std::net::IpAddr>().is_ok());
+    if restricted_change
+        && !id.is_empty()
         && i.data
             .secrets
             .get(id)
@@ -268,7 +273,7 @@ pub fn save_node(
     {
         return Err(ApiError::new(
             409,
-            "已接入服务器的 SSH 地址不可直接修改，请移除后重新添加",
+            "已接入节点可以改用 SSH 域名，请保留原端口和用户名",
         ));
     }
     lease(&mut n, &v, !id.is_empty())?;
@@ -312,7 +317,7 @@ pub fn save_node(
     n.public.country = v.country;
     n.public.city = v.city;
     n.public.code = v.code.clone();
-    n.ip = ip;
+    n.ip = v.ip;
     n.port = v.port;
     n.username = v.username;
     n.visible = v.visible;
@@ -338,49 +343,80 @@ pub fn save_node(
         json!({"node":n,"deployed":false,"message":"服务器配置已保存"}),
     ))
 }
-pub fn delete_node(app: &App, i: &mut Inner, c: &Context, id: &str) -> ApiResult<ApiReply> {
-    app.guard(i, c, true, true)?;
-    if i.ops
-        .transfers
-        .get(id)
-        .is_some_and(|t| t.state == "running")
-    {
-        return Err(ApiError::new(
-            409,
-            "该服务器正在执行管理任务，请等待完成后移除",
-        ));
+pub fn finish_removal(app: &App, i: &mut Inner, id: &str) -> ApiResult<()> {
+    let mut data = i.data.clone();
+    data.nodes.retain(|n| n.public.id != id);
+    data.secrets.remove(id);
+    app.save_data(i, data)?;
+    if let Some(link) = i.agents.remove(id) {
+        link.stop.cancel();
     }
+    i.tickets.retain(|_, t| t.node_id != id);
+    i.enrollments.retain(|_, e| e.node != id);
+    i.ops.transfers.remove(id);
+    i.ops.retired.remove(id);
+    i.ops.removal_names.remove(id);
+    crate::telegram::invalidate(app, i);
+    crate::operations::save(app, i)
+}
+pub fn delete_node(
+    app: &App,
+    i: &mut Inner,
+    c: &Context,
+    id: &str,
+    body: &[u8],
+) -> ApiResult<ApiReply> {
+    #[derive(Default, Deserialize)]
+    #[serde(default, deny_unknown_fields)]
+    struct Removal {
+        forget: bool,
+    }
+    let request: Removal = if body.is_empty() {
+        Removal::default()
+    } else {
+        decode(body)?
+    };
+    app.guard(i, c, true, true)?;
+    crate::auth::require_elevated(i, c)?;
+    let Some(n) = i.data.nodes.iter().find(|n| n.public.id == id).cloned() else {
+        return Ok(ApiReply::ok(json!({"ok":true})));
+    };
     if i.jobs
         .values()
         .any(|j| j.node_id == id && j.state == "running")
     {
         return Err(ApiError::new(409, "请等待部署完成后移除"));
     }
-    let n = i
-        .data
-        .nodes
-        .iter()
-        .find(|n| n.public.id == id)
-        .cloned()
-        .ok_or_else(|| ApiError::new(404, "服务器不存在"))?;
-    crate::auth::require_elevated(i, c)?;
-    if !i.data.secrets.contains_key(id) || !n.public.online || !i.agents.contains_key(id) {
-        if let Some(link) = i.agents.remove(id) {
-            link.stop.cancel();
-        }
-        i.tickets.retain(|_, t| t.node_id != id);
-        i.ops.transfers.remove(id);
-        i.ops.retired.remove(id);
-        i.ops.removal_names.remove(id);
-        crate::operations::save(app, i)?;
-
-        let mut data = i.data.clone();
-        data.nodes.retain(|n| n.public.id != id);
-        data.secrets.remove(id);
-        app.save_data(i, data)?;
-        crate::telegram::invalidate(app, i);
+    let transfer = i.ops.transfers.get(id);
+    let removing = transfer.filter(|t| t.action == "remove");
+    if request.forget && !removing.is_some_and(|t| matches!(t.state.as_str(), "retry" | "failed")) {
+        return Err(ApiError::new(409, "仅可在远端清理失败后单独撤销面板记录"));
+    }
+    if transfer.is_some_and(|t| t.state == "running" && t.action != "remove") {
+        return Err(ApiError::new(409, "该服务器仍在执行管理任务"));
+    }
+    if !i.data.secrets.contains_key(id)
+        || !n.public.online
+        || !i.agents.contains_key(id)
+        || request.forget
+        || removing.is_some_and(|t| t.state == "done")
+    {
+        finish_removal(app, i, id)?;
         app.record(i, "node_removed_offline", &n.public.name);
         return Ok(ApiReply::ok(json!({"ok":true})));
+    }
+    if let Some(prior) = removing.cloned() {
+        if !matches!(prior.state.as_str(), "running" | "pending") {
+            let t = i.ops.transfers.get_mut(id).unwrap();
+            t.next = 0;
+            t.state = "pending".into();
+            t.message = "等待重新清理".into();
+            if let Err(e) = crate::operations::save(app, i) {
+                i.ops.transfers.insert(id.into(), prior);
+                return Err(e);
+            }
+        }
+        return Ok(ApiReply::accepted(json!({"ok":true,"pending":true})));
     }
     crate::migration::start_manage(app, i, id, "remove")?;
     let mut data = i.data.clone();
@@ -464,10 +500,9 @@ pub fn site(app: &App, i: &mut Inner, c: &Context, body: &[u8]) -> ApiResult<Api
     let site = Site {
         name: v.name.trim().into(),
         public: v.public,
-        refresh_seconds: v.refresh_seconds,
     };
-    if !valid_text(&site.name, 60) || !(3..=30).contains(&site.refresh_seconds) {
-        return Err(ApiError::new(400, "请检查站点名称和刷新间隔（3–30 秒）"));
+    if !valid_text(&site.name, 60) {
+        return Err(ApiError::new(400, "请填写有效的站点名称（最多 60 个字符）"));
     }
     let mut data = i.data.clone();
     data.site = site.clone();
@@ -566,6 +601,18 @@ mod tests {
 #[cfg(test)]
 mod contract_tests {
     use super::*;
+    #[test]
+    fn site_accepts_current_and_legacy_refresh_settings() {
+        let current = json!({"name":"Board","public":true});
+        let mut legacy = current.clone();
+        legacy["refreshSeconds"] = json!(30);
+        for site in [current.clone(), legacy] {
+            let input: SiteInput = serde_json::from_value(site.clone()).unwrap();
+            assert_eq!(input.name, "Board");
+            let saved: Site = serde_json::from_value(site).unwrap();
+            assert_eq!(serde_json::to_value(saved).unwrap(), current);
+        }
+    }
     #[test]
     fn existing_browser_lease_payload() {
         let node:NodeInput=decode(br#"{"name":"node","ip":"192.0.2.1","port":22,"username":"root","visible":false,"providerName":"provider","providerURL":"https://example.com","expiresAt":"2026-10-01T00:00:00Z","notifyRenewal":true,"renewalVersion":"previous","country":"region","city":"","code":"IS"}"#).unwrap();

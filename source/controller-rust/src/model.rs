@@ -111,6 +111,8 @@ pub struct Node {
     pub country_auto: bool,
     #[serde(rename = "detectedIP")]
     pub detected_ip: String,
+    #[serde(rename = "agentPeerIP", skip_serializing_if = "String::is_empty")]
+    pub agent_peer_ip: String,
     #[serde(rename = "deployState")]
     pub deploy_state: String,
     #[serde(rename = "deployMessage")]
@@ -138,8 +140,6 @@ pub struct Site {
     pub name: String,
     #[serde(rename = "public")]
     pub public: bool,
-    #[serde(rename = "refreshSeconds")]
-    pub refresh_seconds: i64,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -193,6 +193,7 @@ pub struct Audit {
 #[serde(default)]
 pub struct NodeSecret {
     pub recovery_key: String,
+    pub derived_recovery: bool,
     pub recovery_public: String,
     #[serde(rename = "token_hash")]
     pub token_hash: String,
@@ -202,7 +203,7 @@ pub struct NodeSecret {
     pub ssh_key: String,
     #[serde(rename = "public_key")]
     pub public_key: String,
-    #[serde(rename = "host_key")]
+    #[serde(rename = "host_key", skip_serializing_if = "String::is_empty")]
     pub host_key: String,
 }
 
