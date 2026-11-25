@@ -33,7 +33,7 @@ node build.mjs
 
 ## Agent 发布源
 
-主控从 https://github.com/YJVIst/YJmonitor/releases/download/v0.11.9/ 获取 `stable.json`，先用内嵌 Ed25519 公钥验证签名，再验证精确版本、架构、文件名、长度与 SHA-256。校验失败会终止部署，不执行远端二进制。
+主控从 https://github.com/YJVIst/YJmonitor/releases/download/v0.11.10/ 获取 `stable.json`，先用内嵌 Ed25519 公钥验证签名，再验证精确版本、架构、文件名、长度与 SHA-256。校验失败会终止部署，不执行远端二进制。
 
 发布下载仅允许固定仓库 HTTPS 与 GitHub 资产 CDN，最多跟随 4 次重定向。其他 HTTP 客户端仍不跟随重定向。
 
@@ -43,6 +43,6 @@ node build.mjs
 
     node --test source/tests/seasons.test.mjs
 
-本仓库使用 ops/package-release.py 生成唯一的 Rust 发行包，默认 --variant rust。签名私钥必须放在源码树之外。0.11.9 主控与 0.2.5 Agent 共用 v0.11.9 发行地址。已有版本仍会访问各自固定的下载地址。
+本仓库使用 ops/package-release.py 生成唯一的 Rust 发行包，默认 --variant rust。签名私钥必须放在源码树之外。0.11.10 主控与 0.2.5 Agent 共用 v0.11.10 发行地址。已有版本仍会访问各自固定的下载地址。
 
 发布验收可将 YJ_TEST_CONTROLLER_BINARY 指向本次构建的主控，再执行 python3 -m unittest discover -s ops/tests，覆盖普通 HTTP 与已认证 Agent 升级握手。SSH/SFTP 集成验收使用临时回环 OpenSSH 实例、RSA 主机密钥与 Ed25519 客户端密钥。YJ_TEST_SFTP_DIR 指向含 host.pub 和 identity 的测试目录，YJ_TEST_SFTP_PORT 指向该实例端口；测试实例在只读隔离目录中提供内容为 `release fixture` 加换行的 /marker 文件。在 source/controller-rust 运行 `cargo test --locked --test release_sftp -- --ignored`。
