@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use std::time::Duration;
 use tokio::time::timeout;
 use zeroize::Zeroizing;
-const RELEASE_VERSION: &str = "0.11.7";
+const RELEASE_VERSION: &str = "0.11.8";
 pub const AGENT_VERSION: &str = "0.2.5";
 #[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -515,7 +515,7 @@ mod tests {
     #[test]
     fn release_redirect_boundaries() {
         for url in [
-            "https://github.com/YJVIst/YJmonitor/releases/download/v0.11.7/stable.json",
+            "https://github.com/YJVIst/YJmonitor/releases/download/v0.11.8/stable.json",
             "https://release-assets.githubusercontent.com/github-production-release-asset/1/abc?sig=example",
             "https://objects.githubusercontent.com/github-production-release-asset-2e65be/1/abc",
         ] {
@@ -525,15 +525,15 @@ mod tests {
             );
         }
         for url in [
-            "http://github.com/YJVIst/YJmonitor/releases/download/v0.11.7/stable.json",
-            "https://github.com:444/YJVIst/YJmonitor/releases/download/v0.11.7/stable.json",
-            "https://user:password@github.com/YJVIst/YJmonitor/releases/download/v0.11.7/stable.json",
-            "https://github.com/coexacx/other/releases/download/v0.11.7/stable.json",
-            "https://github.com/coexacx/yuji-probe/releases/download/v0.11.7/stable.json",
+            "http://github.com/YJVIst/YJmonitor/releases/download/v0.11.8/stable.json",
+            "https://github.com:444/YJVIst/YJmonitor/releases/download/v0.11.8/stable.json",
+            "https://user:password@github.com/YJVIst/YJmonitor/releases/download/v0.11.8/stable.json",
+            "https://github.com/coexacx/other/releases/download/v0.11.8/stable.json",
+            "https://github.com/coexacx/yuji-probe/releases/download/v0.11.8/stable.json",
             "https://github.com/YJVIst/YJmonitor/releases/download/rust-v0.11.0/stable.json",
-            "https://github.com/YJVIst/YJmonitor/releases/download/v0.11.7/../../../login",
-            "https://github.com/YJVIst/YJmonitor/releases/download/v0.11.7/stable.json#fragment",
-            "https://github.com/YJVIst/YJmonitor/releases/download/v0.11.7/stable.json?redirect=1",
+            "https://github.com/YJVIst/YJmonitor/releases/download/v0.11.8/../../../login",
+            "https://github.com/YJVIst/YJmonitor/releases/download/v0.11.8/stable.json#fragment",
+            "https://github.com/YJVIst/YJmonitor/releases/download/v0.11.8/stable.json?redirect=1",
             "https://release-assets.githubusercontent.com.evil.example/github-production-release-asset/1",
             "https://release-assets.githubusercontent.com/elsewhere/1",
             "https://127.0.0.1/github-production-release-asset/1",

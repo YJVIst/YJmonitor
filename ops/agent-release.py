@@ -15,7 +15,7 @@ import urllib.parse
 import urllib.request
 
 REPOSITORY = "YJVIst/YJmonitor"
-RELEASE_VERSION = "0.11.7"
+RELEASE_VERSION = "0.11.8"
 AGENT_VERSION = "0.2.5"
 PUBLIC = "5knizERV08A6pN/RMSh6ssDTK22NWm0U3+uCe8/4Azk="
 PREFIX = f"/{REPOSITORY}/releases/download/v{RELEASE_VERSION}/"
