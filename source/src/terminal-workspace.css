@@ -20,7 +20,7 @@
 #terminal-dialog .ssh-server-picker{position:absolute;z-index:15;top:100%;left:10px;width:280px;max-width:calc(100vw - 50px);max-height:320px;overflow:auto;background:#fff;border:1px solid #cbd7df;box-shadow:0 8px 24px #152d4326;border-radius:5px;padding:5px}
 #terminal-dialog .ssh-server-picker button{display:flex;justify-content:space-between;align-items:center;gap:12px;width:100%;padding:9px;text-align:left}
 #terminal-dialog .ssh-server-picker strong{font-weight:500;overflow:hidden;text-overflow:ellipsis}
-#terminal-dialog .ssh-server-picker span{color:#73828d;font-size:11px}
+#terminal-dialog .ssh-server-picker span{min-width:0;white-space:pre-line;overflow-wrap:anywhere;color:#73828d;font-size:11px}
 #terminal-dialog .terminal-header{position:absolute;right:7px;top:4px;z-index:2;padding:0;border:0;background:transparent;min-height:0}
 #terminal-dialog .terminal-actions{display:flex;gap:5px}
 #terminal-dialog .terminal-actions button{padding:5px 10px;border:1px solid #dce4e9;font-size:12px}
@@ -39,7 +39,7 @@
 #terminal-dialog #terminal-footer-state{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #terminal-dialog .file-sidebar{position:relative;background:#fff;color:#344955;overflow:auto;flex:0 0 var(--file-width);width:var(--file-width);min-width:220px;padding:10px 12px 0;scrollbar-color:#c9d4db transparent;backdrop-filter:none}
 #terminal-dialog #terminal-monitor{flex:none}
-#terminal-dialog .terminal-node-ip{font:550 12px ui-monospace,monospace;padding-right:18px;overflow-wrap:anywhere;margin-bottom:4px;color:#253d4d}
+#terminal-dialog .terminal-node-ip{white-space:pre-line;font:550 12px ui-monospace,monospace;padding-right:18px;overflow-wrap:anywhere;margin-bottom:4px;color:#253d4d}
 #terminal-dialog .terminal-system-line{font-size:11px;color:#76848c;line-height:1.8;font-variant-numeric:tabular-nums}
 #terminal-dialog .terminal-resource{font-size:11px;margin-top:10px}
 #terminal-dialog .terminal-resource>div:first-child{display:flex;align-items:center;justify-content:space-between;gap:8px;color:#4f646d;font-variant-numeric:tabular-nums}
