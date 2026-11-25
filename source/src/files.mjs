@@ -1,6 +1,6 @@
 import {compactBytes,workspaceWidth,workspaceHeight} from './terminal-monitor.mjs';
 import {createTransfers} from './transfers.mjs';
-const defaultDirectory='/root';
+const defaultDirectory='/';
 export const isInspection=action=>['processes','services','service_logs','system'].includes(action);
 export function createFileBrowser({dialog,scope,send,onResize,onTerminal,onCommands=()=>{}}){
  const $=s=>scope.querySelector(s),sidebar=$('#file-sidebar'),tree=$('#file-tree'),pathInput=$('#file-path'),editor=$('#file-editor'),input=$('#file-content'),status=$('#file-editor-status');
@@ -32,7 +32,21 @@ export function createFileBrowser({dialog,scope,send,onResize,onTerminal,onComma
  function finishName(value){if(nameDialog.open)nameDialog.close();const r=nameResolve;nameResolve=null;r?.(value);}
  function askName(title,value=''){if(nameResolve)return Promise.resolve(null);nameTitle.textContent=title;nameInput.value=value;nameError.textContent='';nameDialog.showModal();nameInput.focus();nameInput.select();return new Promise(resolve=>nameResolve=resolve);}
  nameForm.onsubmit=e=>{e.preventDefault();const v=nameInput.value;if(!v||v==='.'||v==='..'||/[/\x00-\x1f\x7f]/.test(v)||bytes(v)>255){nameError.textContent='名称不能含斜线或控制字符，最多 255 字节';return;}finishName(v);};nameDialog.oncancel=e=>{e.preventDefault();finishName(null);};
- async function changeName(action,path){if(!filesAvailable||saving)return;if(!await confirmDiscard())return;const value=await askName(action==='mkdir'?'新建目录':'重命名',action==='rename'?path.split('/').pop():'');if(value===null)return;try{await request(action,path,{target:value});cache.clear();if(action==='rename'&&current&&(current.path===path||current.path.startsWith(path+'/'))){closeEditor();}await load(root,{navigate:true});treeNote(action==='mkdir'?'目录已创建':'名称已更新',false,action==='mkdir');}catch(e){treeNote(e.message,true);}}
+ async function changeName(action,path){
+  if(!filesAvailable||saving)return;
+  const epoch=generation;
+  if(action==='rename'&&!await confirmDiscard())return;
+  const value=await askName(action==='mkdir'?'新建目录':'重命名',action==='rename'?path.split('/').pop():'');
+  if(value===null||epoch!==generation)return;
+  try{
+   await request(action,path,{target:value});
+   if(epoch!==generation)return;
+   if(action==='mkdir')queue.directoryCreated(path,value);
+   else if(current&&(current.path===path||current.path.startsWith(path+'/')))closeEditor();
+   cache.clear();await load(root,{navigate:true});
+   if(epoch===generation&&action==='rename')treeNote('名称已更新');
+  }catch(e){if(epoch===generation)treeNote(e.message,true);}
+ }
  async function createFile(){if(!filesAvailable||saving||opening)return;const epoch=generation,path=root,value=await askName('新建文件');if(value===null||epoch!==generation||!filesAvailable)return;await queue.add(new File([],value,{type:'text/plain'}),path,true);}
  const queue=createTransfers({holder:$('#terminal-file-pane'),request,note:treeNote,refresh:async()=>{cache.delete(root);await load(root,{navigate:true});}});
  async function perform(file,path,creating=false){return queue.add(file,path,creating);}
@@ -46,9 +60,8 @@ export function createFileBrowser({dialog,scope,send,onResize,onTerminal,onComma
  function request(action,path,extra={}){const inspection=isInspection(action);if(!active||!inspection&&!filesAvailable)return Promise.reject(Error(inspection?'SSH 连接已断开，请重新连接':'文件连接尚未就绪，请稍后重试'));if([...pending.values()].filter(p=>p.inspection===inspection).length>=(inspection?2:3))return Promise.reject(Error(inspection?'资源查询正在进行':'已有文件操作正在进行'));const id='file_'+(++sequence);return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{pending.delete(id);reject(Error('操作超时；若正在保存，请重新读取确认结果'));},['transfer_resume','upload_finish'].includes(action)?130000:action==='save'?50000:24000);pending.set(id,{resolve,reject,timer,inspection});try{send(JSON.stringify({type:'file',id,action,path,...extra}),action);}catch(e){clearTimeout(timer);pending.delete(id);reject(e);}});}
 
  function receive(message){const job=pending.get(message.id);if(!job)return;pending.delete(message.id);clearTimeout(job.timer);if(message.ok)job.resolve(message.data);else{const e=Error(message.error||'文件操作未完成');e.code=message.code;job.reject(e);}}
- function treeNote(message,error=false,dismissible=false){
+ function treeNote(message,error=false){
   const status=$('#file-tree-status');status.textContent=message;status.classList.toggle('is-error',error);
-  if(dismissible)status.append(' ',button('关闭','关闭目录创建提示',()=>treeNote('')));
  }
  let volumes=[],navigation=0;
  let bottomRevision=0;
