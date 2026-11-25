@@ -218,17 +218,18 @@ function patchDetailMeter(parent,value,label){
   track.value=value;track.classList.toggle('warning',value>=85);track.setAttribute('aria-valuetext',value.toFixed(1)+'%');
  }
 }
-function detailResource(label,kind){
- const box=resource(label,kind,null,false),value=box.querySelector('.resource-value').firstChild;
- const total=box.querySelector('.resource-total'),caption=box.querySelector('.resource-caption span');
- function update(amount,online){
-  const ratio=online?percent(amount?.used,amount?.total):null,used=online?display(amount?.used):'—';
-  if(value.data!==used)value.data=used;
-  setText(total,amount?.total>0?'/ '+display(amount.total)+' GiB':'');
-  setText(caption,finite(ratio)?ratio.toFixed(1)+'%':online?'未启用':'暂无数据');
-  patchDetailMeter(box,ratio,label+'使用率');
+function detailUsageRow(className,showPercent=false){
+ const item=el('li','detail-usage-item '+className),row=el('div','detail-usage-head'),name=el('strong');
+ const values=el('span','detail-usage-values'),size=el('span'),usage=showPercent?el('span','detail-usage-percent'):null;
+ values.append(size);if(usage)values.append(usage);row.append(name,values);item.append(row);
+ function update(label,amount,online){
+  if(name.textContent!==label){setText(name,label);item.querySelector('.metric-meter')?.remove();}
+  const ratio=online?percent(amount?.used,amount?.total):null;
+  setText(size,(online?display(amount?.used):'—')+' / '+display(amount?.total)+' GiB');
+  if(usage)setText(usage,finite(ratio)?ratio.toFixed(1)+'%':'');
+  patchDetailMeter(item,ratio,label+'使用率');
  }
- return {box,update};
+ return {item,update};
 }
 let detailView=null;
 function createDetail(node){
@@ -246,9 +247,12 @@ function createDetail(node){
  const viewport=el('div','live-chart'),strip=el('div','chart-strip'),graph={chart:viewport,strip};
  viewport.setAttribute('role','img');viewport.append(strip);
  const axis=el('div','chart-axis');axis.append(el('span','','最近 2 分钟'),el('span','','现在'));chart.append(chartHeader,viewport,axis);
- const notice=el('p','dialog-notice'),resources=el('div','detail-resource-row');
- const memory=detailResource('内存','memory'),swap=detailResource('Swap','swap');resources.append(memory.box,swap.box);
- const disks=el('section'),diskHeader=el('div','section-heading'),count=el('span'),list=el('ul','disk-list'),rows=[];
+ const notice=el('p','dialog-notice'),resources=el('section','detail-memory'),memoryHeader=el('div','section-heading');
+ memoryHeader.append(el('h3','','内存'),el('span','','已用 / 总量'));
+ const memoryList=el('ul','detail-usage-list detail-resource-row');
+ const memory=detailUsageRow('memory-item',true),swap=detailUsageRow('swap-item',true);
+ memoryList.append(memory.item,swap.item);resources.append(memoryHeader,memoryList);
+ const disks=el('section'),diskHeader=el('div','section-heading'),count=el('span'),list=el('ul','detail-usage-list disk-list'),rows=[];
  diskHeader.append(el('h3','','磁盘'),count);disks.append(diskHeader,list);
  const network=networkUI.detail();
  root.replaceChildren(heading,hardware,chart,notice,resources,disks,network.section);
@@ -274,19 +278,13 @@ function createDetail(node){
    graph.motion?.cancel();graph.motion=null;graph.history=null;
    setText(notice,'最后一次上报于 '+n.lastSeenMinutes+' 分钟前。节点离线后暂停显示使用率，避免将过期数据作为当前状态。');
   }
-  memory.update(n.memory,n.online);
-  const has=hasSwap(n);if(swap.box.hidden===has)swap.box.hidden=!has;if(has)swap.update(n.swap,n.online);
+  memory.update('物理内存',n.memory,n.online);
+  const has=hasSwap(n);if(swap.item.hidden===has)swap.item.hidden=!has;if(has)swap.update('Swap',n.swap,n.online);
   setText(count,n.disks.length+' 个卷 · 容量单位 GiB');
   while(rows.length>n.disks.length)rows.pop().item.remove();
   n.disks.forEach((disk,i)=>{
-   if(!rows[i]){
-    const item=el('li','disk-item'),row=el('div','disk-row'),name=el('strong'),size=el('span');
-    row.append(name,size);item.append(row);list.append(item);rows.push({item,name,size});
-   }
-   const {item,name,size}=rows[i],label=disk.name+'使用率',ratio=n.online?percent(disk.used,disk.total):null;
-   if(name.textContent!==disk.name){setText(name,disk.name);item.querySelector('.metric-meter')?.remove();}
-   setText(size,(n.online?display(disk.used):'—')+' / '+display(disk.total)+' GiB');
-   patchDetailMeter(item,ratio,label);
+   if(!rows[i]){const view=detailUsageRow('disk-item');rows.push(view);list.append(view.item);}
+   rows[i].update(disk.name,disk,n.online);
   });
   network.update(n);updateAdmin?.();previous=n;
  }
